@@ -1,0 +1,31 @@
+      <main class="stack">
+        <section class="intro reveal">
+          <div class="intro-copy">
+            <h1>{{ hero_heading }}</h1>
+{{ hero_lead_html }}
+            <div class="link-row">
+{{ hero_links }}
+            </div>
+          </div>
+        </section>
+
+        <section class="content-section reveal">
+          <h2>{{ focus_heading }}</h2>
+          <p>
+            {{ focus_body }}
+          </p>
+          <ul class="simple-list">
+{{ focus_items }}
+          </ul>
+        </section>
+
+        <section class="content-section reveal">
+          <div class="section-header">
+            <h2>{{ recent_posts_heading }}</h2>
+            <a class="section-link" href="blog.html">{{ recent_posts_link_label }}</a>
+          </div>
+          <div class="post-list">
+{{ recent_posts }}
+          </div>
+        </section>
+      </main>
