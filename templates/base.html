@@ -1,0 +1,39 @@
+{{ generated_notice }}
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{{ page_title }}</title>
+{{ meta_description_tag }}
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=Manrope:wght@400;500;700;800&amp;display=swap"
+      rel="stylesheet"
+    />
+    <link rel="icon" href="{{ asset_prefix }}favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="{{ asset_prefix }}styles.css" />
+  </head>
+  <body>
+    <div class="site-shell">
+      <header class="site-header">
+        <a class="brand" href="{{ home_href }}">{{ site_name }}</a>
+        <button
+          class="nav-toggle"
+          type="button"
+          aria-expanded="false"
+          aria-controls="site-nav"
+        >
+          Menu
+        </button>
+        <nav id="site-nav" class="site-nav" aria-label="Primary">
+{{ nav_links }}
+        </nav>
+      </header>
+{{ body_html }}
+{{ footer_html }}
+    </div>
+    <script src="{{ asset_prefix }}script.js"></script>
+  </body>
+</html>
