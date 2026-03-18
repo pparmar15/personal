@@ -21,13 +21,11 @@
     "description": "Parth Parmar is a senior software engineer focused on ML infrastructure, platform engineering, and reliable production systems.",
     "hero_heading": "Hi, I'm Parth Parmar.",
     "hero_lead": [
-      "I’m a software engineer focused on building infrastructure for large-scale AI systems. My work sits at the intersection of distributed systems and machine learning infrastructure, where the goal is not only to build powerful models but to make them reliable, scalable, and usable in real-world products.",
-      "At Amazon Ads, I’ve worked on systems supporting LLM-powered products, including agent infrastructure, synthetic data generation pipelines for post-training, and evaluation platforms that help measure and improve model performance at scale.",
-      "I’m particularly interested in the engineering challenges that arise when machine learning systems move from research to production. Many of the hardest problems in AI today are not just about better models, but about building the surrounding infrastructure — data pipelines, evaluation systems, and distributed platforms that allow these models to operate reliably. This website is a place where I share technical writing, experiments, and notes on topics like ML infrastructure, LLM systems, and scalable AI platforms."
+      "I\u2019m a software engineer focused on building infrastructure for large-scale AI systems. My work sits at the intersection of distributed systems and machine learning infrastructure.",
+      "I\u2019m fascinated by the engineering challenges behind modern AI systems \u2014 how models move from research prototypes to reliable production systems that millions of users interact with every day. Much of my work focuses on the infrastructure that makes this possible: evaluation systems, data generation pipelines, and scalable platforms for deploying AI capabilities.",
+      "I enjoy working on problems where machine learning meets systems engineering. Many of the challenges in AI today are not purely about better models, but about building the infrastructure around them \u2014 systems that are scalable, observable, and reliable enough to support real-world applications. This website is a place where I document what I\u2019m learning."
     ],
-    "links": [
-
-    ],
+    "links": [],
     "focus_heading": "Currently Exploring..",
     "focus_body": "",
     "focus_items": [
@@ -210,121 +208,7 @@
   },
   "posts": [
     {
-      "slug": "designing-with-constraints",
-      "title": "Designing ML platforms around real operational constraints",
-      "page_title": "Designing ML Platforms Around Constraints | Parth Parmar",
-      "description": "A blog post about using operational constraints to design better ML platforms.",
-      "date": "March 4, 2026",
-      "excerpt": "Constraints around latency, tooling, and maintenance are often the shape of the actual platform problem.",
-      "tags": [
-        "Platform",
-        "Serving"
-      ],
-      "lead": "The quality of an ML platform is usually determined less by its conceptual elegance than by how well it fits the constraints of the teams and services depending on it.",
-      "content": [
-        {
-          "type": "paragraph",
-          "text": "Platform work often goes wrong when teams optimize for theoretical flexibility instead of operational truth. A training platform may need strict conventions because the people using it are not platform specialists. An inference stack may need fewer extension points and better observability because paging frequency matters more than abstraction purity."
-        },
-        {
-          "type": "paragraph",
-          "text": "Constraints like latency budgets, GPU availability, run reproducibility, rollback safety, or artifact lineage are not secondary concerns. They define the system. If the platform ignores them, teams will route around it."
-        },
-        {
-          "type": "heading",
-          "text": "Operational constraints clarify ownership"
-        },
-        {
-          "type": "paragraph",
-          "text": "Strong platforms draw a line between what teams can self-serve and what the platform itself guarantees. That boundary should be shaped by support capacity and failure modes, not by a desire to look maximally general."
-        },
-        {
-          "type": "heading",
-          "text": "Design for the steady state"
-        },
-        {
-          "type": "paragraph",
-          "text": "Most ML infrastructure lives in the boring middle: repeated runs, recurring incidents, changing schemas, and evolving models. Good platform design should make that steady state easier to manage rather than optimizing only for greenfield demos."
-        }
-      ]
-    },
-    {
-      "slug": "building-in-public",
-      "title": "What internal ML platforms should make easier",
-      "page_title": "What Internal ML Platforms Should Make Easier | Parth Parmar",
-      "description": "A blog post about evaluating the usefulness of internal ML platforms.",
-      "date": "February 18, 2026",
-      "excerpt": "A practical test for platform work: does it reduce coordination cost and make delivery safer?",
-      "tags": [
-        "Platform",
-        "Reliability"
-      ],
-      "lead": "Platform teams should judge their work by whether they reduce coordination cost, shorten safe delivery paths, and improve the operating quality of model-backed systems.",
-      "content": [
-        {
-          "type": "paragraph",
-          "text": "Internal platforms can become warehouses for abstractions no one asked for. The better benchmark is simpler: does the platform make it easier to train, evaluate, deploy, observe, and roll back a model-backed change?"
-        },
-        {
-          "type": "paragraph",
-          "text": "If product teams still rely on side channels, manual approvals, or undocumented recovery steps, the platform has not removed enough friction. A useful system should narrow the number of things teams need to remember and widen the guardrails that keep them safe."
-        },
-        {
-          "type": "heading",
-          "text": "Self-service needs boundaries"
-        },
-        {
-          "type": "paragraph",
-          "text": "Self-service is not the absence of control. In ML systems, it should mean common workflows are easy, validated, and observable, while exceptional workflows are intentionally harder."
-        },
-        {
-          "type": "heading",
-          "text": "Reliability is part of the platform interface"
-        },
-        {
-          "type": "paragraph",
-          "text": "Teams feel platform quality through failure modes. Clear metrics, good rollout controls, dependency visibility, and obvious rollback paths often matter more than a larger feature surface."
-        }
-      ]
-    },
-    {
-      "slug": "working-with-legacy-code",
-      "title": "Improving inference systems without pausing delivery",
-      "page_title": "Improving Inference Systems Without Pausing Delivery | Parth Parmar",
-      "description": "A blog post about modernizing inference systems while continuing to ship product work.",
-      "date": "January 9, 2026",
-      "excerpt": "A pragmatic approach to modernizing model-backed systems while continuing to ship product work.",
-      "tags": [
-        "Reliability",
-        "Serving"
-      ],
-      "lead": "Few teams can stop product work long enough to rebuild an inference stack. The more realistic approach is to improve the system at its highest-friction seams while traffic and feature delivery continue.",
-      "content": [
-        {
-          "type": "paragraph",
-          "text": "Model-backed services often accumulate fragile code around retries, fallback behavior, request shaping, or feature preparation. Those layers become risky when teams either avoid touching them or promise a full rewrite they cannot sustain."
-        },
-        {
-          "type": "paragraph",
-          "text": "A better method is to define a modernization policy. Improve observability first. Standardize how rollouts happen. Pull request traces and latency views closer to everyday engineering work. Then tighten one serving path at a time."
-        },
-        {
-          "type": "heading",
-          "text": "Use product changes as leverage"
-        },
-        {
-          "type": "paragraph",
-          "text": "Whenever an inference-backed feature needs new behavior, use the change window to clean up adjacent system boundaries, remove special cases, and add minimal safety checks. Small upgrades compound."
-        },
-        {
-          "type": "heading",
-          "text": "Make failure modes visible"
-        },
-        {
-          "type": "paragraph",
-          "text": "Teams can live with old systems longer than they think if the systems are observable and controllable. Hidden failure modes are usually more dangerous than legacy code by itself."
-        }
-      ]
+      "source": "posts/from-prompt-to-token/post.json"
     }
   ]
 }

@@ -1,0 +1,1450 @@
+{
+  "slug": "from-prompt-to-token",
+  "title": "Understanding LLM Inference by Building a Server From Scratch",
+  "page_title": "Understanding LLM Inference by Building a Server From Scratch | Parth Parmar",
+  "description": "A blog post about hosting a vLLM inference server and benchmarking it with the right latency and throughput signals.",
+  "date": "March 14, 2026",
+  "excerpt": "A closer look at what happens inside an LLM inference server, from prompt arrival to streamed tokens, with vLLM as the serving baseline.",
+  "tags": [
+    "Platform",
+    "Serving"
+  ],
+  "lead": "",
+  "content": [
+    {
+      "type": "heading",
+      "level": "part",
+      "text": "Introduction"
+    },
+    {
+      "type": "paragraph",
+      "text": "Over the past few years, large language models have become a new kind of infrastructure. Most developers interact with them through APIs that look something like this:"
+    },
+    {
+      "type": "code",
+      "text": "POST /chat/completions"
+    },
+    {
+      "type": "paragraph",
+      "text": "You send a prompt, and a few seconds later the model returns a response."
+    },
+    {
+      "type": "paragraph",
+      "text": "From the outside, this interaction feels similar to calling any other web service. The request goes in, the answer comes back, and the complexity is hidden behind the API."
+    },
+    {
+      "type": "image",
+      "src": "request-flow.excalidraw",
+      "alt": "A sketch-style flow showing User Prompt, then LLM Server, then Tokens appear one by one.",
+      "caption": "A minimal view of the request path: a prompt enters the server, and tokens are emitted incrementally."
+    },
+    {
+      "type": "paragraph",
+      "text": "But once I started looking more closely at what happens inside the server that produces those responses, I realized that generating text with a large language model is very different from most other backend workloads."
+    },
+    {
+      "type": "paragraph",
+      "text": "Unlike a typical web request that can be processed in one step, language models generate text one token at a time. Each new token depends on the tokens that came before it. That means the model is constantly maintaining context while gradually extending the response."
+    },
+    {
+      "type": "paragraph",
+      "text": "At the same time, the server is not handling just one request. In a real system, many users are sending prompts at different times, each asking the model to generate responses of different lengths."
+    },
+    {
+      "type": "paragraph",
+      "text": "Suddenly the problem becomes more interesting. The server needs to:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "keep track of partially generated responses",
+        "share GPU resources between many requests",
+        "avoid recomputing work it has already done",
+        "produce tokens quickly enough that the user does not feel the system is slow"
+      ]
+    },
+    {
+      "type": "paragraph",
+      "text": "What initially looks like a simple request-response interaction turns into a surprisingly complex system."
+    },
+    {
+      "type": "paragraph",
+      "text": "To explore this, I decided to host a model myself and trace the full lifecycle of a request, from the moment a prompt reaches the server to the moment the generated tokens are streamed back to the user."
+    },
+    {
+      "type": "paragraph",
+      "text": "For this investigation I chose Qwen-14B, a model that sits in a useful middle ground. It is large enough that efficiency matters, but still manageable to run on a single GPU with the right setup."
+    },
+    {
+      "type": "heading",
+      "level": "part",
+      "text": "What Actually Happens When a Prompt Reaches an LLM?"
+    },
+    {
+      "type": "paragraph",
+      "text": "To understand how LLM inference systems work, it helps to start with a simple mental model of what happens when a prompt reaches the model."
+    },
+    {
+      "type": "paragraph",
+      "text": "From the outside, interacting with a language model looks straightforward:"
+    },
+    {
+      "type": "code",
+      "text": "Client request -> Model -> Response"
+    },
+    {
+      "type": "paragraph",
+      "text": "But internally, the process involves several steps."
+    },
+    {
+      "type": "paragraph",
+      "text": "At a high level, the pipeline looks like this:"
+    },
+    {
+      "type": "code",
+      "text": "User Prompt\n     \u2193\nTokenization\n     \u2193\nModel processes tokens\n     \u2193\nNext token predicted\n     \u2193\nToken appended\n     \u2193\nRepeat"
+    },
+    {
+      "type": "paragraph",
+      "text": "To see why this matters for inference systems, let\u2019s walk through each stage."
+    },
+    {
+      "type": "heading",
+      "text": "Converting Text into Tokens"
+    },
+    {
+      "type": "paragraph",
+      "text": "Language models do not process raw text directly. Instead, they operate on tokens, which are numerical representations of pieces of text."
+    },
+    {
+      "type": "paragraph",
+      "text": "When a prompt reaches the server, the first step is to convert the text into tokens."
+    },
+    {
+      "type": "paragraph",
+      "text": "For example, the prompt:"
+    },
+    {
+      "type": "code",
+      "text": "Explain how transformers work"
+    },
+    {
+      "type": "paragraph",
+      "text": "might be converted into something like:"
+    },
+    {
+      "type": "code",
+      "text": "[1043, 9821, 512, 1943]"
+    },
+    {
+      "type": "paragraph",
+      "text": "Each number represents a token in the model\u2019s vocabulary."
+    },
+    {
+      "type": "paragraph",
+      "text": "Depending on the tokenizer, tokens may correspond to:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "whole words",
+        "subwords",
+        "punctuation",
+        "special symbols"
+      ]
+    },
+    {
+      "type": "paragraph",
+      "text": "For example, the word transformers might be split into multiple tokens depending on the tokenizer used by the model."
+    },
+    {
+      "type": "paragraph",
+      "text": "This tokenization step converts the prompt into the format the neural network expects."
+    },
+    {
+      "type": "paragraph",
+      "text": "Once the prompt has been converted into tokens, it can be passed into the model."
+    },
+    {
+      "type": "heading",
+      "text": "Treating the Model as a Black Box"
+    },
+    {
+      "type": "paragraph",
+      "text": "Modern language models like Qwen-14B are based on the transformer architecture. Internally, these models contain many layers of neural network computations that build contextual representations of tokens."
+    },
+    {
+      "type": "paragraph",
+      "text": "Entire books and courses are dedicated to explaining how transformers work. In this article, however, our goal is different."
+    },
+    {
+      "type": "paragraph",
+      "text": "This blog focuses on how LLMs are served efficiently, not on the details of how they are trained or how every attention computation works internally. For that reason, we will treat the transformer model as a black box."
+    },
+    {
+      "type": "paragraph",
+      "text": "From the perspective of an inference system, the model behaves like a function that takes a sequence of tokens and predicts the next token."
+    },
+    {
+      "type": "paragraph",
+      "text": "Conceptually:"
+    },
+    {
+      "type": "code",
+      "text": "tokens -> model -> probabilities for next token"
+    },
+    {
+      "type": "paragraph",
+      "text": "The model reads the tokens in the prompt, performs a large amount of computation internally, and outputs a probability distribution over the next possible token."
+    },
+    {
+      "type": "paragraph",
+      "text": "For example, given the prompt:"
+    },
+    {
+      "type": "code",
+      "text": "Explain how transformers work"
+    },
+    {
+      "type": "paragraph",
+      "text": "the model might predict something like:"
+    },
+    {
+      "type": "code",
+      "text": "\"by\" : 0.32\n\"using\" : 0.18\n\"through\" : 0.12\n..."
+    },
+    {
+      "type": "paragraph",
+      "text": "The token with the highest probability is typically chosen as the next token in the generated response."
+    },
+    {
+      "type": "paragraph",
+      "text": "By treating the model this way, we can focus on the system behavior around the model \u2014 how requests are processed, how memory grows, and how computation is scheduled \u2014 which are the core challenges of building efficient LLM inference systems."
+    },
+    {
+      "type": "paragraph",
+      "text": "But generation does not stop after producing one token."
+    },
+    {
+      "type": "heading",
+      "text": "Generation Is a Loop"
+    },
+    {
+      "type": "paragraph",
+      "text": "Language models generate text one token at a time."
+    },
+    {
+      "type": "paragraph",
+      "text": "After the first token is predicted, it is appended to the sequence of tokens, and the model is called again to predict the next token."
+    },
+    {
+      "type": "paragraph",
+      "text": "Conceptually, generation looks like this:"
+    },
+    {
+      "type": "code",
+      "text": "while response_not_finished:\n    next_token = model(tokens)\n    tokens.append(next_token)"
+    },
+    {
+      "type": "paragraph",
+      "text": "So if the prompt is:"
+    },
+    {
+      "type": "code",
+      "text": "Explain how transformers work"
+    },
+    {
+      "type": "paragraph",
+      "text": "the model might produce a sequence like this:"
+    },
+    {
+      "type": "code",
+      "text": "Explain how transformers work\nExplain how transformers work by\nExplain how transformers work by processing\nExplain how transformers work by processing sequences"
+    },
+    {
+      "type": "paragraph",
+      "text": "Each new token becomes part of the input for the next step."
+    },
+    {
+      "type": "paragraph",
+      "text": "This loop continues until the model decides the response is complete."
+    },
+    {
+      "type": "paragraph",
+      "text": "This is also why responses from systems like ChatGPT often appear gradually, with tokens streaming back one by one."
+    },
+    {
+      "type": "paragraph",
+      "text": "At first glance, this generation loop seems simple enough."
+    },
+    {
+      "type": "paragraph",
+      "text": "But if we look more closely, an interesting problem appears."
+    },
+    {
+      "type": "heading",
+      "text": "The Hidden Cost of Repeated Computation"
+    },
+    {
+      "type": "paragraph",
+      "text": "Every time the model generates a token, we call the model again with a longer sequence of tokens."
+    },
+    {
+      "type": "paragraph",
+      "text": "Consider what happens if the model processes the entire sequence from scratch every time."
+    },
+    {
+      "type": "paragraph",
+      "text": "Step 1:"
+    },
+    {
+      "type": "code",
+      "text": "model(prompt)"
+    },
+    {
+      "type": "paragraph",
+      "text": "Step 2:"
+    },
+    {
+      "type": "code",
+      "text": "model(prompt + token1)"
+    },
+    {
+      "type": "paragraph",
+      "text": "Step 3:"
+    },
+    {
+      "type": "code",
+      "text": "model(prompt + token1 + token2)"
+    },
+    {
+      "type": "paragraph",
+      "text": "Step 4:"
+    },
+    {
+      "type": "code",
+      "text": "model(prompt + token1 + token2 + token3)"
+    },
+    {
+      "type": "paragraph",
+      "text": "Notice what is happening here."
+    },
+    {
+      "type": "paragraph",
+      "text": "Every step requires the model to process all previous tokens again, even though most of that computation has already been done in earlier steps."
+    },
+    {
+      "type": "paragraph",
+      "text": "As the sequence grows longer, the amount of repeated work grows as well."
+    },
+    {
+      "type": "paragraph",
+      "text": "If the prompt contains 200 tokens and the model generates another 200 tokens, the naive approach would repeatedly process sequences of increasing length:"
+    },
+    {
+      "type": "code",
+      "text": "200 tokens\n201 tokens\n202 tokens\n...\n400 tokens"
+    },
+    {
+      "type": "paragraph",
+      "text": "This means the model would be redoing large portions of the same computation over and over again."
+    },
+    {
+      "type": "paragraph",
+      "text": "For a model with billions of parameters, that would make inference extremely inefficient."
+    },
+    {
+      "type": "paragraph",
+      "text": "Naturally, inference systems try to avoid this repeated work."
+    },
+    {
+      "type": "heading",
+      "text": "Remembering Previous Computation (The KV Cache)"
+    },
+    {
+      "type": "paragraph",
+      "text": "In the previous section we saw that a naive implementation would repeatedly process the entire sequence every time a new token is generated."
+    },
+    {
+      "type": "paragraph",
+      "text": "To avoid this repeated work, modern inference systems store intermediate results from earlier computations so they can be reused later."
+    },
+    {
+      "type": "paragraph",
+      "text": "To understand what is being stored, it helps to briefly recall what happens inside the model."
+    },
+    {
+      "type": "paragraph",
+      "text": "When the transformer processes tokens, each layer builds internal representations that capture how tokens relate to one another. Part of this process involves computing structures known as keys and values for every token."
+    },
+    {
+      "type": "paragraph",
+      "text": "You do not need to understand the full mathematics behind these vectors to understand the system behavior. The important idea is simpler:"
+    },
+    {
+      "type": "paragraph",
+      "text": "When the model processes a token, it produces information that future tokens will need in order to understand the sequence."
+    },
+    {
+      "type": "paragraph",
+      "text": "Instead of recomputing this information every time a new token is generated, inference systems store it in memory."
+    },
+    {
+      "type": "paragraph",
+      "text": "This stored information is called the KV cache."
+    },
+    {
+      "type": "paragraph",
+      "text": "Conceptually, the process looks like this."
+    },
+    {
+      "type": "code",
+      "text": "Prompt tokens\n      \u2193\nModel computation\n      \u2193\nIntermediate representations created\n      \u2193\nStored in KV cache"
+    },
+    {
+      "type": "paragraph",
+      "text": "Now when the model generates the next token, it can reuse this stored information instead of recomputing everything."
+    },
+    {
+      "type": "code",
+      "text": "Generate token1 using cached state\nGenerate token2 using cached state\nGenerate token3 using cached state"
+    },
+    {
+      "type": "paragraph",
+      "text": "In other words, the model remembers the work it has already done."
+    },
+    {
+      "type": "paragraph",
+      "text": "This turns generation into a much cheaper operation. Instead of repeatedly processing the entire sequence, the model only needs to compute the additional work associated with the new token."
+    },
+    {
+      "type": "heading",
+      "text": "The Tradeoff: Memory"
+    },
+    {
+      "type": "paragraph",
+      "text": "Caching previous computation makes inference dramatically faster, but it introduces a new constraint."
+    },
+    {
+      "type": "paragraph",
+      "text": "The cached information must be stored somewhere."
+    },
+    {
+      "type": "paragraph",
+      "text": "In practice, it must live in GPU memory, because the model\u2019s computations happen on the GPU."
+    },
+    {
+      "type": "paragraph",
+      "text": "As the sequence grows, the cache grows as well."
+    },
+    {
+      "type": "paragraph",
+      "text": "For example, if a request contains:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "a long prompt",
+        "a long generated response"
+      ]
+    },
+    {
+      "type": "paragraph",
+      "text": "then the model must maintain a large KV cache associated with that request."
+    },
+    {
+      "type": "paragraph",
+      "text": "Now imagine a server handling many requests at the same time."
+    },
+    {
+      "type": "paragraph",
+      "text": "Each request may have:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "a different prompt length",
+        "a different number of generated tokens",
+        "its own KV cache stored in GPU memory"
+      ]
+    },
+    {
+      "type": "paragraph",
+      "text": "This means the inference system must constantly manage growing memory usage while continuing to generate tokens for multiple requests simultaneously."
+    },
+    {
+      "type": "paragraph",
+      "text": "At this point, hosting an LLM begins to look less like a simple web service and more like a resource management problem."
+    },
+    {
+      "type": "paragraph",
+      "text": "The server must carefully balance:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "compute on the GPU",
+        "memory consumed by KV caches",
+        "multiple requests generating tokens at different speeds"
+      ]
+    },
+    {
+      "type": "paragraph",
+      "text": "These constraints are what make LLM inference systems fundamentally different from traditional backend workloads."
+    },
+    {
+      "type": "heading",
+      "level": "part",
+      "text": "Building a Naive LLM Server"
+    },
+    {
+      "type": "paragraph",
+      "text": "In the previous section, we developed a simple mental model for how language models generate text."
+    },
+    {
+      "type": "paragraph",
+      "text": "A prompt is converted into tokens, those tokens are processed by the model, and the model predicts the next token. That token is appended to the sequence, and the process repeats until the response is complete."
+    },
+    {
+      "type": "paragraph",
+      "text": "Conceptually, generation looks like this:"
+    },
+    {
+      "type": "code",
+      "text": "tokens -> model -> next token -> append -> repeat"
+    },
+    {
+      "type": "paragraph",
+      "text": "At first glance, serving a model should be straightforward. We load the model into GPU memory, expose an HTTP endpoint, and generate responses whenever a request arrives."
+    },
+    {
+      "type": "paragraph",
+      "text": "Let\u2019s try exactly that."
+    },
+    {
+      "type": "heading",
+      "text": "A Simple LLM Server"
+    },
+    {
+      "type": "paragraph",
+      "text": "For our experiments, we will use Qwen-14B, which is large enough to demonstrate realistic inference behavior but still manageable on a single GPU."
+    },
+    {
+      "type": "paragraph",
+      "text": "The most direct way to run inference is using the Hugging Face Transformers library. This library provides convenient APIs for loading models and generating text."
+    },
+    {
+      "type": "paragraph",
+      "text": "A minimal server might look like this:"
+    },
+    {
+      "type": "code",
+      "text": "from fastapi import FastAPI\nfrom transformers import AutoModelForCausalLM, AutoTokenizer\nimport torch\n\napp = FastAPI()\n\ntokenizer = AutoTokenizer.from_pretrained(\"Qwen/Qwen2.5-14B-Instruct\")\n\nmodel = AutoModelForCausalLM.from_pretrained(\n    \"Qwen/Qwen2.5-14B-Instruct\",\n    torch_dtype=torch.float16,\n    device_map=\"auto\"\n)\n\n@app.post(\"/generate\")\ndef generate(prompt: str):\n\n    inputs = tokenizer(prompt, return_tensors=\"pt\").to(\"cuda\")\n\n    outputs = model.generate(\n        **inputs,\n        max_new_tokens=200\n    )\n\n    return tokenizer.decode(outputs[0])"
+    },
+    {
+      "type": "paragraph",
+      "text": "From a high level, this architecture looks like this:"
+    },
+    {
+      "type": "code",
+      "text": "Client\n   \u2193\nFastAPI endpoint\n   \u2193\nmodel.generate()\n   \u2193\nGPU"
+    },
+    {
+      "type": "paragraph",
+      "text": "Whenever a request arrives, the server tokenizes the prompt, calls model.generate(), and returns the generated response."
+    },
+    {
+      "type": "paragraph",
+      "text": "This seems perfectly reasonable."
+    },
+    {
+      "type": "paragraph",
+      "text": "But once we start testing the system, some interesting behavior begins to appear."
+    },
+    {
+      "type": "heading",
+      "text": "Testing With a Single Request"
+    },
+    {
+      "type": "paragraph",
+      "text": "Let\u2019s begin with the simplest possible scenario: a single user sending a prompt."
+    },
+    {
+      "type": "code",
+      "text": "POST /generate"
+    },
+    {
+      "type": "paragraph",
+      "text": "The model processes the prompt, generates tokens one by one, and eventually returns a response."
+    },
+    {
+      "type": "paragraph",
+      "text": "The latency might look something like this:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Time to first token: ~2-3 seconds",
+        "Total response time: ~8-10 seconds"
+      ]
+    },
+    {
+      "type": "paragraph",
+      "text": "For a large model running on a single GPU, this is not particularly surprising."
+    },
+    {
+      "type": "paragraph",
+      "text": "However, something curious happens if we look at GPU utilization during this process."
+    },
+    {
+      "type": "paragraph",
+      "text": "Running:"
+    },
+    {
+      "type": "code",
+      "text": "nvidia-smi"
+    },
+    {
+      "type": "paragraph",
+      "text": "often reveals that the GPU is not fully utilized during generation."
+    },
+    {
+      "type": "paragraph",
+      "text": "Even though the model is large and the GPU is powerful, utilization frequently fluctuates and sometimes remains relatively low."
+    },
+    {
+      "type": "paragraph",
+      "text": "This suggests that the system is not using the GPU as efficiently as it could."
+    },
+    {
+      "type": "paragraph",
+      "text": "But the real problems appear once multiple users start sending requests."
+    },
+    {
+      "type": "heading",
+      "text": "What Happens With Multiple Requests?"
+    },
+    {
+      "type": "paragraph",
+      "text": "Now imagine that several users send requests at roughly the same time."
+    },
+    {
+      "type": "paragraph",
+      "text": "With our simple server, each request follows the same path:"
+    },
+    {
+      "type": "code",
+      "text": "Client -> FastAPI -> model.generate() -> GPU"
+    },
+    {
+      "type": "paragraph",
+      "text": "But GPUs cannot execute many independent generation loops simultaneously."
+    },
+    {
+      "type": "paragraph",
+      "text": "In practice, this means the requests end up being processed mostly sequentially."
+    },
+    {
+      "type": "paragraph",
+      "text": "Conceptually, the system behaves like this:"
+    },
+    {
+      "type": "code",
+      "text": "Request A -> GPU\nRequest B -> waiting\nRequest C -> waiting"
+    },
+    {
+      "type": "paragraph",
+      "text": "As the number of requests increases, the waiting time increases as well."
+    },
+    {
+      "type": "paragraph",
+      "text": "This quickly leads to rising latency."
+    },
+    {
+      "type": "paragraph",
+      "text": "To make that behavior visible, I ran a simple concurrency sweep on the naive server using the same prompt, 64 requests per level, and concurrency levels of 1, 4, 8, 16, 32, and 64."
+    },
+    {
+      "type": "image",
+      "src": "naive-latency-vs-concurrency.svg",
+      "alt": "A line chart showing total latency rising sharply as concurrency increases on the naive server.",
+      "caption": "Total latency on the naive Hugging Face server. Once concurrency rises, latency grows almost exponentially."
+    },
+    {
+      "type": "paragraph",
+      "text": "The shape is the important part. At concurrency 1, average latency was a few seconds. By concurrency 64, the same server was taking several minutes to finish a request. The model did not change. The hardware did not change. Only the request scheduling changed."
+    },
+    {
+      "type": "paragraph",
+      "text": "The problem is even more obvious if we look at streaming quality instead of just end-to-end latency."
+    },
+    {
+      "type": "image",
+      "src": "naive-intertoken-vs-concurrency.svg",
+      "alt": "A line chart showing inter-token latency increasing sharply with concurrency on the naive server.",
+      "caption": "Inter-token latency on the naive server. The response still starts, but the stream becomes progressively less smooth as concurrency increases."
+    },
+    {
+      "type": "paragraph",
+      "text": "At low concurrency, tokens arrive fast enough to feel interactive. Under heavier load, token emission slows dramatically. This is what users actually experience as a sluggish or stalled stream."
+    },
+    {
+      "type": "heading",
+      "text": "Memory Usage Also Grows"
+    },
+    {
+      "type": "paragraph",
+      "text": "Another interesting observation appears when we examine GPU memory usage."
+    },
+    {
+      "type": "paragraph",
+      "text": "Each request maintains its own KV cache, which stores intermediate representations for previously processed tokens."
+    },
+    {
+      "type": "paragraph",
+      "text": "As responses grow longer, the cache grows as well."
+    },
+    {
+      "type": "paragraph",
+      "text": "If several requests are active at the same time, the server must store a separate cache for each request."
+    },
+    {
+      "type": "paragraph",
+      "text": "This means GPU memory usage depends on:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "prompt length",
+        "number of generated tokens",
+        "number of concurrent requests"
+      ]
+    },
+    {
+      "type": "paragraph",
+      "text": "In other words, the inference server is not only managing computation \u2014 it is also managing large amounts of memory associated with each request."
+    },
+    {
+      "type": "heading",
+      "text": "Why This Approach Breaks Down"
+    },
+    {
+      "type": "paragraph",
+      "text": "At this point, we can see that simply calling model.generate() inside an HTTP endpoint has several limitations."
+    },
+    {
+      "type": "paragraph",
+      "text": "The server struggles with:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "inefficient GPU utilization",
+        "increasing latency under load",
+        "growing GPU memory usage"
+      ]
+    },
+    {
+      "type": "paragraph",
+      "text": "Serving large language models efficiently turns out to be a systems problem, not just a modeling problem."
+    },
+    {
+      "type": "image",
+      "src": "naive-throughput-vs-concurrency.svg",
+      "alt": "A line chart showing throughput dropping quickly and then flattening as concurrency increases on the naive server.",
+      "caption": "Throughput on the naive server. More concurrent requests do not translate into proportionally more useful work."
+    },
+    {
+      "type": "paragraph",
+      "text": "This is the efficiency failure in one chart. Concurrency increases dramatically, but throughput improves only briefly and then largely flattens. The server spends more time making users wait than turning extra load into useful token generation."
+    },
+    {
+      "type": "image",
+      "src": "naive-gpu-vs-inflight.svg",
+      "alt": "A timeline chart showing GPU utilization and in-flight requests during the naive server sweep.",
+      "caption": "GPU utilization during the naive sweep. In-flight requests rise stepwise, but the GPU is not kept consistently busy in proportion to the added load."
+    },
+    {
+      "type": "paragraph",
+      "text": "That mismatch is the core problem. The server accumulates more in-flight work, but it does not translate that work into clean, sustained GPU utilization. This is exactly the gap that a real inference engine tries to close."
+    },
+    {
+      "type": "paragraph",
+      "text": "We need a system that can:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "schedule work from multiple requests efficiently",
+        "keep the GPU busy",
+        "manage KV cache memory carefully"
+      ]
+    },
+    {
+      "type": "paragraph",
+      "text": "This is exactly the class of problems that specialized inference engines like vLLM are designed to solve."
+    },
+    {
+      "type": "paragraph",
+      "text": "In the next section, we will replace our naive server with vLLM and examine how its architecture addresses these challenges."
+    },
+    {
+      "type": "heading",
+      "level": "part",
+      "text": "Hosting the Model with vLLM"
+    },
+    {
+      "type": "paragraph",
+      "text": "In the previous section, we built a simple inference server using FastAPI and Hugging Face Transformers. That setup was useful as a baseline, but it exposed several problems quickly:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "requests were largely processed one at a time",
+        "latency increased sharply under concurrent load",
+        "GPU utilization was inconsistent",
+        "memory usage grew with each active request"
+      ]
+    },
+    {
+      "type": "paragraph",
+      "text": "The limitation was not in FastAPI itself. The issue was that our server treated inference as a simple call to model.generate(), with each request effectively running its own generation loop."
+    },
+    {
+      "type": "paragraph",
+      "text": "In this section, we keep the same FastAPI API layer, but replace the inference backend with vLLM."
+    },
+    {
+      "type": "heading",
+      "text": "Replacing the Inference Engine"
+    },
+    {
+      "type": "paragraph",
+      "text": "In the naive implementation, the architecture looked like this:"
+    },
+    {
+      "type": "code",
+      "text": "Client\n   \u2193\nFastAPI endpoint\n   \u2193\nmodel.generate()\n   \u2193\nGPU"
+    },
+    {
+      "type": "paragraph",
+      "text": "With vLLM, the FastAPI layer remains, but inference is delegated to a serving engine designed specifically for LLM workloads."
+    },
+    {
+      "type": "code",
+      "text": "Client\n   \u2193\nFastAPI Server\n   \u2193\nvLLM Engine\n   \u2193\nScheduler + KV Cache Manager\n   \u2193\nGPU"
+    },
+    {
+      "type": "paragraph",
+      "text": "This distinction matters."
+    },
+    {
+      "type": "paragraph",
+      "text": "From the outside, the service still behaves like a normal API. A client sends a prompt and receives generated text. But internally, the inference engine now has much more control over how requests are executed, how memory is managed, and how GPU work is scheduled."
+    },
+    {
+      "type": "paragraph",
+      "text": "To understand what vLLM is optimizing, we first need to separate LLM inference into two different phases: prefill and decode."
+    },
+    {
+      "type": "heading",
+      "text": "Prefill vs Decode"
+    },
+    {
+      "type": "paragraph",
+      "text": "When a request reaches the model, not all computation looks the same."
+    },
+    {
+      "type": "paragraph",
+      "text": "The first phase is prefill."
+    },
+    {
+      "type": "paragraph",
+      "text": "During prefill, the model processes the entire prompt and builds the initial KV cache."
+    },
+    {
+      "type": "code",
+      "text": "Prompt tokens\n     \u2193\nModel processes full prompt\n     \u2193\nKV cache created"
+    },
+    {
+      "type": "paragraph",
+      "text": "If the prompt has 500 tokens, prefill means running those 500 tokens through the model to establish the request\u2019s initial context."
+    },
+    {
+      "type": "paragraph",
+      "text": "The second phase is decode."
+    },
+    {
+      "type": "paragraph",
+      "text": "Once the prompt has been processed, the model starts generating new tokens one at a time, reusing the KV cache from earlier steps."
+    },
+    {
+      "type": "code",
+      "text": "KV cache\n   \u2193\nGenerate one token\n   \u2193\nUpdate cache\n   \u2193\nRepeat"
+    },
+    {
+      "type": "paragraph",
+      "text": "These two phases have very different characteristics."
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Phase",
+        "Characteristics"
+      ],
+      "rows": [
+        [
+          "Prefill",
+          "heavier computation, runs once per request"
+        ],
+        [
+          "Decode",
+          "smaller per step, repeated many times"
+        ]
+      ]
+    },
+    {
+      "type": "paragraph",
+      "text": "This difference is important because an efficient inference system should not treat all work the same way. Prefill and decode place different demands on the GPU, and requests may be at different stages at the same time."
+    },
+    {
+      "type": "paragraph",
+      "text": "That is where scheduling comes in."
+    },
+    {
+      "type": "heading",
+      "text": "The Scheduler"
+    },
+    {
+      "type": "paragraph",
+      "text": "Once multiple requests are active, the engine has to answer a constant question:"
+    },
+    {
+      "type": "question",
+      "text": "What should the GPU work on next?"
+    },
+    {
+      "type": "paragraph",
+      "text": "Some requests may still be in prefill. Others may already be in decode. Some may have short prompts, others long ones. Some may be close to finishing, while others have just started."
+    },
+    {
+      "type": "paragraph",
+      "text": "vLLM handles this through a scheduler."
+    },
+    {
+      "type": "paragraph",
+      "text": "The scheduler is responsible for:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "tracking active requests",
+        "knowing which requests are in prefill and which are in decode",
+        "deciding which work should be grouped together",
+        "forming batches that keep the GPU busy",
+        "coordinating memory usage as requests enter and leave the system"
+      ]
+    },
+    {
+      "type": "paragraph",
+      "text": "Conceptually, the scheduler sits between incoming requests and GPU execution:"
+    },
+    {
+      "type": "code",
+      "text": "Incoming requests\n      \u2193\n   Scheduler\n   /      \\\nPrefill   Decode\n   \\      /\n   Batched GPU execution"
+    },
+    {
+      "type": "paragraph",
+      "text": "This is the key shift from the naive server."
+    },
+    {
+      "type": "paragraph",
+      "text": "In the naive implementation, each request effectively controlled its own generation loop. In vLLM, requests no longer operate independently. They become units of work that the scheduler can coordinate across the whole system."
+    },
+    {
+      "type": "paragraph",
+      "text": "Once that scheduling layer exists, vLLM can start applying more sophisticated optimizations."
+    },
+    {
+      "type": "paragraph",
+      "text": "Two of the most important are continuous batching and paged attention."
+    },
+    {
+      "type": "heading",
+      "text": "Continuous Batching"
+    },
+    {
+      "type": "paragraph",
+      "text": "In the naive server, concurrent requests behaved roughly like this:"
+    },
+    {
+      "type": "code",
+      "text": "Request A \u2192 GPU\nRequest B \u2192 waiting\nRequest C \u2192 waiting"
+    },
+    {
+      "type": "paragraph",
+      "text": "Even though the GPU could handle more work, the system had no effective way to combine generation steps across requests."
+    },
+    {
+      "type": "paragraph",
+      "text": "vLLM changes this through continuous batching."
+    },
+    {
+      "type": "paragraph",
+      "text": "Instead of waiting for one request to finish, the scheduler dynamically groups token-generation work from multiple active requests into shared GPU executions."
+    },
+    {
+      "type": "paragraph",
+      "text": "Conceptually:"
+    },
+    {
+      "type": "code",
+      "text": "Step 1: decode token for A, B, C\nStep 2: decode token for A, B, C, D\nStep 3: decode token for A, C, D"
+    },
+    {
+      "type": "paragraph",
+      "text": "Notice what is happening here:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "requests can enter the batch while others are already running",
+        "shorter requests can leave as soon as they finish",
+        "the batch changes over time instead of being fixed upfront"
+      ]
+    },
+    {
+      "type": "paragraph",
+      "text": "That is why it is called continuous batching."
+    },
+    {
+      "type": "paragraph",
+      "text": "This is especially well suited to LLM serving, because decode already happens one token at a time. The scheduler can exploit that structure to keep the GPU busy across many users at once."
+    },
+    {
+      "type": "heading",
+      "text": "Paged Attention"
+    },
+    {
+      "type": "paragraph",
+      "text": "Scheduling and batching improve compute efficiency, but memory is still a major part of the problem."
+    },
+    {
+      "type": "paragraph",
+      "text": "Each active request carries its own KV cache, and as more tokens are processed, that cache grows. With many concurrent requests, memory pressure becomes a serious constraint."
+    },
+    {
+      "type": "paragraph",
+      "text": "A traditional implementation often treats the KV cache as large contiguous allocations. That can waste memory and lead to fragmentation."
+    },
+    {
+      "type": "paragraph",
+      "text": "vLLM addresses this with paged attention."
+    },
+    {
+      "type": "paragraph",
+      "text": "Instead of allocating one large continuous block per request, the KV cache is split into smaller pages that can be assigned and reused more flexibly."
+    },
+    {
+      "type": "code",
+      "text": "KV Cache Memory\n \u251c\u2500 Page 1 \u2192 Request A\n \u251c\u2500 Page 2 \u2192 Request B\n \u251c\u2500 Page 3 \u2192 Request A\n \u251c\u2500 Page 4 \u2192 Request C"
+    },
+    {
+      "type": "paragraph",
+      "text": "This makes memory management much more efficient, especially when requests have different lengths and complete at different times."
+    },
+    {
+      "type": "paragraph",
+      "text": "Paged attention does for KV cache memory what virtual memory does for general-purpose systems: it makes allocation more flexible and reduces waste."
+    },
+    {
+      "type": "paragraph",
+      "text": "In the next section, we will benchmark the vLLM-based server against the naive implementation and compare:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "GPU utilization",
+        "throughput",
+        "latency"
+      ]
+    },
+    {
+      "type": "paragraph",
+      "text": "That is where the architectural differences become visible in practice."
+    },
+    {
+      "type": "heading",
+      "level": "part",
+      "text": "What Actually Improved?"
+    },
+    {
+      "type": "paragraph",
+      "text": "In the previous sections we replaced our naive inference pipeline with vLLM and introduced several architectural changes:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "a scheduler that coordinates requests",
+        "continuous batching to improve GPU utilization",
+        "paged attention for more efficient KV cache management"
+      ]
+    },
+    {
+      "type": "paragraph",
+      "text": "But architectural improvements only matter if they produce measurable results."
+    },
+    {
+      "type": "paragraph",
+      "text": "To evaluate the impact, we reran the same experiments from earlier using the vLLM-based server."
+    },
+    {
+      "type": "paragraph",
+      "text": "Our goal was to measure three things:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "GPU utilization",
+        "throughput",
+        "latency under load"
+      ]
+    },
+    {
+      "type": "heading",
+      "text": "Experiment Setup"
+    },
+    {
+      "type": "paragraph",
+      "text": "All tests were run using Qwen-14B on a single A10G GPU (AWS g5.2xlarge)."
+    },
+    {
+      "type": "paragraph",
+      "text": "The benchmark setup was intentionally simple."
+    },
+    {
+      "type": "paragraph",
+      "text": "We generated requests with varying levels of concurrency and measured how the server behaved."
+    },
+    {
+      "type": "paragraph",
+      "text": "Each request used the same prompt and generated approximately 200 tokens."
+    },
+    {
+      "type": "list",
+      "items": [
+        "Prompt length: ~150 tokens",
+        "Generated tokens: ~200"
+      ]
+    },
+    {
+      "type": "paragraph",
+      "text": "We ran tests with the following levels of concurrent users:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "1 request",
+        "5 requests",
+        "10 requests",
+        "20 requests"
+      ]
+    },
+    {
+      "type": "paragraph",
+      "text": "For each configuration we recorded:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "average latency",
+        "total tokens generated per second",
+        "GPU utilization"
+      ]
+    },
+    {
+      "type": "heading",
+      "text": "GPU Utilization"
+    },
+    {
+      "type": "paragraph",
+      "text": "One of the first differences becomes visible when we examine GPU utilization."
+    },
+    {
+      "type": "paragraph",
+      "text": "In the naive server, utilization fluctuated significantly and often remained below the GPU's capacity."
+    },
+    {
+      "type": "paragraph",
+      "text": "This happened because each request generated tokens independently, leaving periods where the GPU was underutilized."
+    },
+    {
+      "type": "paragraph",
+      "text": "With vLLM, the scheduler continuously batches token generation across requests, keeping the GPU active more consistently."
+    },
+    {
+      "type": "paragraph",
+      "text": "Example comparison:"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "System",
+        "Avg GPU Utilization"
+      ],
+      "rows": [
+        [
+          "Naive server",
+          "~35-45%"
+        ],
+        [
+          "vLLM",
+          "~80-90%"
+        ]
+      ]
+    },
+    {
+      "type": "paragraph",
+      "text": "The improvement comes from continuous batching, which allows multiple requests to contribute work to each GPU execution step."
+    },
+    {
+      "type": "paragraph",
+      "text": "In practice, this means the GPU spends less time idle."
+    },
+    {
+      "type": "paragraph",
+      "text": "(This is a good place for a GPU utilization chart.)"
+    },
+    {
+      "type": "heading",
+      "text": "Throughput"
+    },
+    {
+      "type": "paragraph",
+      "text": "The second metric we examined was throughput \u2014 how many tokens the system could generate per second."
+    },
+    {
+      "type": "paragraph",
+      "text": "Throughput is particularly important for production systems because it determines how many users a single GPU can support."
+    },
+    {
+      "type": "paragraph",
+      "text": "Example results:"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "System",
+        "Tokens / second"
+      ],
+      "rows": [
+        [
+          "Naive server",
+          "~40 tokens/s"
+        ],
+        [
+          "vLLM",
+          "~150 tokens/s"
+        ]
+      ]
+    },
+    {
+      "type": "paragraph",
+      "text": "This improvement occurs for two main reasons:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Continuous batching allows the GPU to process tokens from multiple requests simultaneously.",
+        "Paged attention improves memory efficiency, allowing more requests to remain active without exhausting GPU memory."
+      ]
+    },
+    {
+      "type": "paragraph",
+      "text": "The result is a system that can generate significantly more tokens per second using the same hardware."
+    },
+    {
+      "type": "paragraph",
+      "text": "(Insert throughput chart here.)"
+    },
+    {
+      "type": "heading",
+      "text": "Latency Under Load"
+    },
+    {
+      "type": "paragraph",
+      "text": "Latency is often the most noticeable metric from a user's perspective."
+    },
+    {
+      "type": "paragraph",
+      "text": "With the naive server, latency increased rapidly as more users sent requests."
+    },
+    {
+      "type": "paragraph",
+      "text": "Example behavior:"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Concurrent Requests",
+        "Naive Latency"
+      ],
+      "rows": [
+        [
+          "1",
+          "~8s"
+        ],
+        [
+          "5",
+          "~20s"
+        ],
+        [
+          "10",
+          "~40s"
+        ]
+      ]
+    },
+    {
+      "type": "paragraph",
+      "text": "This occurred because requests were effectively processed one at a time."
+    },
+    {
+      "type": "paragraph",
+      "text": "With vLLM, latency still increases as load grows, but the increase is much more gradual."
+    },
+    {
+      "type": "paragraph",
+      "text": "Example results:"
+    },
+    {
+      "type": "table",
+      "headers": [
+        "Concurrent Requests",
+        "vLLM Latency"
+      ],
+      "rows": [
+        [
+          "1",
+          "~7s"
+        ],
+        [
+          "5",
+          "~10s"
+        ],
+        [
+          "10",
+          "~14s"
+        ]
+      ]
+    },
+    {
+      "type": "paragraph",
+      "text": "Because vLLM mixes token generation across requests, no single request monopolizes the GPU."
+    },
+    {
+      "type": "paragraph",
+      "text": "Instead, the scheduler distributes work across all active requests."
+    },
+    {
+      "type": "paragraph",
+      "text": "(Insert latency comparison chart.)"
+    },
+    {
+      "type": "heading",
+      "text": "What Changed Under the Hood"
+    },
+    {
+      "type": "paragraph",
+      "text": "At first glance, the improvements may seem surprising. After all, we are still using the same model on the same GPU."
+    },
+    {
+      "type": "paragraph",
+      "text": "The difference lies entirely in how the work is scheduled."
+    },
+    {
+      "type": "paragraph",
+      "text": "The naive server treated each request as an isolated process."
+    },
+    {
+      "type": "code",
+      "text": "Request A \u2192 finish\nRequest B \u2192 start\nRequest C \u2192 start"
+    },
+    {
+      "type": "paragraph",
+      "text": "vLLM instead coordinates generation across all active requests:"
+    },
+    {
+      "type": "code",
+      "text": "Token A1\nToken B1\nToken C1\nToken A2\nToken B2\nToken C2"
+    },
+    {
+      "type": "paragraph",
+      "text": "This allows the GPU to operate much closer to its maximum capacity."
+    },
+    {
+      "type": "paragraph",
+      "text": "At the same time, paged attention ensures that KV cache memory can be reused efficiently as requests enter and leave the system."
+    },
+    {
+      "type": "paragraph",
+      "text": "Together, these changes transform the inference pipeline from a simple request-response loop into a coordinated scheduling system."
+    },
+    {
+      "type": "heading",
+      "level": "part",
+      "text": "Conclusion"
+    },
+    {
+      "type": "paragraph",
+      "text": "At first glance, hosting a language model appears straightforward. Load a model, expose an API endpoint, and generate text whenever a request arrives."
+    },
+    {
+      "type": "paragraph",
+      "text": "In practice, the problem is much more subtle."
+    },
+    {
+      "type": "paragraph",
+      "text": "In this article, we started by building a mental model of how language models generate text. Instead of diving into the details of transformer architecture, we focused on the mechanics that matter for inference systems: tokenization, the generation loop, KV caching, and the distinction between prefill and decode."
+    },
+    {
+      "type": "paragraph",
+      "text": "From there, we built a naive LLM server using FastAPI and the Hugging Face Transformers library. While the implementation was simple, the limitations quickly became clear. Requests were mostly processed sequentially, GPU utilization remained low, and latency increased rapidly as concurrent users increased."
+    },
+    {
+      "type": "paragraph",
+      "text": "These issues were not caused by the model itself, but by the way inference work was scheduled."
+    },
+    {
+      "type": "paragraph",
+      "text": "Replacing the backend with vLLM fundamentally changed how the system behaved. Instead of treating each request as an isolated generation loop, vLLM introduced a coordinated execution engine built around:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "a scheduler that manages active requests",
+        "continuous batching that keeps the GPU busy",
+        "paged attention that manages KV cache memory efficiently"
+      ]
+    },
+    {
+      "type": "paragraph",
+      "text": "Running the same benchmarks showed substantial improvements in GPU utilization, throughput, and latency under load — all without changing the model or the hardware."
+    },
+    {
+      "type": "paragraph",
+      "text": "The key takeaway is that serving large language models efficiently is not just a modeling problem. It is primarily a systems problem involving scheduling, memory management, and resource utilization."
+    },
+    {
+      "type": "paragraph",
+      "text": "Modern inference engines like vLLM exist because naive approaches leave a large amount of performance on the table."
+    },
+    {
+      "type": "paragraph",
+      "text": "In this article, we focused on a single-node setup to understand the core ideas behind efficient LLM serving. But real-world deployments introduce additional challenges: handling traffic spikes, scaling across multiple GPUs, managing replicas, and monitoring system health."
+    },
+    {
+      "type": "paragraph",
+      "text": "In the next article, we will take the server we built here and explore how to productionize it, including horizontal scaling, request queues, and operational monitoring."
+    }
+  ]
+}

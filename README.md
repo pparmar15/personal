@@ -1,12 +1,13 @@
 # Personal Site
 
-This repository still publishes as a plain static site on GitHub Pages, but the HTML pages are now generated from shared templates and a single content file so you do not have to repeat the same edits across multiple pages.
+This repository still publishes as a plain static site on GitHub Pages, but the HTML pages are now generated from shared templates, a site config file, and per-post content files so you do not have to repeat the same edits across multiple pages.
 
 ## Edit flow
 
 Update these files first:
 
-- `content/site.json` for site copy, links, resume entries, and blog post content
+- `content/site.json` for site copy, links, resume entries, and the list of blog post sources
+- `posts/<slug>/post.json` for the content and metadata of an individual blog post
 - `templates/` for shared page structure
 - `styles.css` and `script.js` for styling and interactions
 
@@ -28,7 +29,7 @@ That command regenerates:
 - `blog.html`
 - `resume.html`
 - `404.html`
-- `posts/*.html`
+- `posts/*/index.html`
 
 ## Local preview
 
