@@ -40,12 +40,15 @@
         <article class="post-body reveal">
           <p class="blog-meta">March 14, 2026 - Platform, Serving</p>
           <h1>Understanding LLM Inference by Building a Server From Scratch</h1>
-
           <h2 class="part-heading" id="introduction">Introduction</h2>
           <p>
             Over the past few years, large language models have become a new kind of infrastructure. Most developers interact with them through APIs that look something like this:
           </p>
-          <pre><code>POST /chat/completions</code></pre>
+          <div class="post-visual post-visual--mono">
+            <div class="visual-mono-card">
+              <span class="visual-mono-text">POST /chat/completions</span>
+            </div>
+          </div>
           <p>
             You send a prompt, and a few seconds later the model returns a response.
           </p>
@@ -87,17 +90,10 @@
           <p>
             At a high level, the pipeline looks like this:
           </p>
-          <pre><code>User Prompt
-               ↓
-          Tokenization
-               ↓
-          Model processes tokens
-               ↓
-          Next token predicted
-               ↓
-          Token appended
-               ↓
-          Repeat</code></pre>
+          <figure class="post-figure">
+            <img src="inference-pipeline.svg" alt="A sketch-style inference pipeline showing User Prompt, Tokenization, Model processes tokens, Next token predicted, Token appended, and Repeat with a loop back." loading="lazy" />
+            <figcaption>A high-level view of inference: the prompt is tokenized, processed by the model, extended with the next token, and the loop repeats until the response ends.</figcaption>
+          </figure>
           <p>
             To see why this matters for inference systems, let’s walk through each stage.
           </p>
@@ -111,11 +107,25 @@
           <p>
             For example, the prompt:
           </p>
-          <pre><code>Explain how transformers work</code></pre>
+          <div class="post-visual post-visual--mono">
+            <div class="visual-mono-card">
+              <span class="visual-mono-text">Explain how transformers work</span>
+            </div>
+          </div>
           <p>
             might be converted into something like:
           </p>
-          <pre><code>[1043, 9821, 512, 1943]</code></pre>
+          <div class="post-visual post-visual--token_row">
+            <p class="post-visual-title">Prompt after tokenization</p>
+            <div class="visual-token-row">
+              <div class="visual-token-chips">
+                <span class="visual-token-chip">1043</span>
+                <span class="visual-token-chip">9821</span>
+                <span class="visual-token-chip">512</span>
+                <span class="visual-token-chip">1943</span>
+              </div>
+            </div>
+          </div>
           <p>
             Each number represents a token in the model’s vocabulary. Depending on the tokenizer, a single token might correspond to a whole word, a subword fragment, or a punctuation mark.
           </p>
@@ -141,21 +151,13 @@
           <p>
             Conceptually:
           </p>
-          <pre><code>tokens -&gt; model -&gt; probabilities for next token</code></pre>
+          <figure class="post-figure">
+            <img src="black-box-mental-model.svg" alt="A conceptual black-box mental model showing tokenized input on the left, a dark model box in the center, and next-token probabilities on the right." loading="lazy" />
+            <figcaption>A useful serving abstraction: feed tokenized input into the model, treat the transformer internals as a black box, and read out probabilities for the next token.</figcaption>
+          </figure>
           <p>
             The model reads the tokens in the prompt, performs a large amount of computation internally, and outputs a probability distribution over the next possible token.
           </p>
-          <p>
-            For example, given the prompt:
-          </p>
-          <pre><code>Explain how transformers work</code></pre>
-          <p>
-            the model might predict something like:
-          </p>
-          <pre><code>"by" : 0.32
-          "using" : 0.18
-          "through" : 0.12
-          ...</code></pre>
           <p>
             The token with the highest probability is typically chosen as the next token in the generated response.
           </p>
@@ -173,18 +175,29 @@
             After the first token is predicted, it is appended to the sequence of tokens, and the model is called again to predict the next token.
           </p>
           <p>
-            Conceptually, generation looks like this:
-          </p>
-          <pre><code>while response_not_finished:
-              next_token = model(tokens)
-              tokens.append(next_token)</code></pre>
-          <p>
             Starting from our earlier prompt, the model might produce a sequence like this:
           </p>
-          <pre><code>Explain how transformers work
-          Explain how transformers work by
-          Explain how transformers work by processing
-          Explain how transformers work by processing sequences</code></pre>
+          <div class="post-visual post-visual--sequence">
+            <p class="post-visual-title">Sequence grows one token at a time</p>
+            <div class="visual-sequence">
+              <div class="visual-sequence-row">
+                <span class="visual-sequence-index">01</span>
+                <span class="visual-sequence-text">Explain how transformers work</span>
+              </div>
+              <div class="visual-sequence-row">
+                <span class="visual-sequence-index">02</span>
+                <span class="visual-sequence-text">Explain how transformers work by</span>
+              </div>
+              <div class="visual-sequence-row">
+                <span class="visual-sequence-index">03</span>
+                <span class="visual-sequence-text">Explain how transformers work by processing</span>
+              </div>
+              <div class="visual-sequence-row">
+                <span class="visual-sequence-index">04</span>
+                <span class="visual-sequence-text">Explain how transformers work by processing sequences</span>
+              </div>
+            </div>
+          </div>
           <p>
             Each new token becomes part of the input for the next step.
           </p>
@@ -204,22 +217,27 @@
           <p>
             Consider what happens if the model processes the entire sequence from scratch every time.
           </p>
-          <p>
-            Step 1:
-          </p>
-          <pre><code>model(prompt)</code></pre>
-          <p>
-            Step 2:
-          </p>
-          <pre><code>model(prompt + token1)</code></pre>
-          <p>
-            Step 3:
-          </p>
-          <pre><code>model(prompt + token1 + token2)</code></pre>
-          <p>
-            Step 4:
-          </p>
-          <pre><code>model(prompt + token1 + token2 + token3)</code></pre>
+          <div class="post-visual post-visual--sequence">
+            <p class="post-visual-title">Naive repeated recomputation</p>
+            <div class="visual-sequence">
+              <div class="visual-sequence-row">
+                <span class="visual-sequence-index">01</span>
+                <span class="visual-sequence-text">model(prompt)</span>
+              </div>
+              <div class="visual-sequence-row">
+                <span class="visual-sequence-index">02</span>
+                <span class="visual-sequence-text">model(prompt + token1)</span>
+              </div>
+              <div class="visual-sequence-row">
+                <span class="visual-sequence-index">03</span>
+                <span class="visual-sequence-text">model(prompt + token1 + token2)</span>
+              </div>
+              <div class="visual-sequence-row">
+                <span class="visual-sequence-index">04</span>
+                <span class="visual-sequence-text">model(prompt + token1 + token2 + token3)</span>
+              </div>
+            </div>
+          </div>
           <p>
             Notice what is happening here.
           </p>
@@ -230,21 +248,7 @@
             As the sequence grows longer, the amount of repeated work grows as well.
           </p>
           <p>
-            If the prompt contains 200 tokens and the model generates another 200 tokens, the naive approach would repeatedly process sequences of increasing length:
-          </p>
-          <pre><code>200 tokens
-          201 tokens
-          202 tokens
-          ...
-          400 tokens</code></pre>
-          <p>
-            This means the model would be redoing large portions of the same computation over and over again.
-          </p>
-          <p>
-            For a model with billions of parameters, that would make inference extremely inefficient.
-          </p>
-          <p>
-            Naturally, inference systems try to avoid this repeated work.
+            This means the model would be redoing large portions of the same computation over and over again. For a model with billions of parameters, that would make inference extremely inefficient. Naturally, inference systems try to avoid this repeated work.
           </p>
           <h3 class="post-subheading" id="remembering-previous-computation-the-kv-cache">Remembering Previous Computation (The KV Cache)</h3>
           <p>
@@ -272,66 +276,34 @@
             This stored information is called the KV cache.
           </p>
           <p>
+            In fact, inference naturally splits into two distinct phases based on this caching behavior.
+          </p>
+          <p>
+            When a request arrives, the model must first process the entire prompt to build the initial KV cache. This is called the prefill phase. If the prompt has 500 tokens, prefill means running all 500 through the model to establish context. This is a heavy, one-time computation.
+          </p>
+          <p>
+            Once prefill is complete, the model switches to the decode phase — generating new tokens one at a time, reusing the KV cache from earlier steps. Each decode step is much lighter than prefill, but it happens many times.
+          </p>
+          <p>
             Conceptually, the process looks like this.
           </p>
-          <pre><code>Prompt tokens
-                ↓
-          Model computation
-                ↓
-          Intermediate representations created
-                ↓
-          Stored in KV cache</code></pre>
+          <figure class="post-figure">
+            <img src="prefill-decode-kv-cache.svg" alt="A combined diagram showing the two phases of inference: prefill processes the full prompt and creates the KV cache, then decode generates tokens one at a time, reusing and incrementally extending the cache." loading="lazy" />
+            <figcaption>The two phases of inference: prefill processes the entire prompt to build the KV cache, then decode generates tokens one at a time, reusing the cached state and appending new entries with each step.</figcaption>
+          </figure>
           <p>
-            Now when the model generates the next token, it can reuse this stored information instead of recomputing everything.
-          </p>
-          <pre><code>Generate token1 using cached state
-          Generate token2 using cached state
-          Generate token3 using cached state</code></pre>
-          <p>
-            In other words, the model remembers the work it has already done.
-          </p>
-          <p>
-            This turns generation into a much cheaper operation. Instead of repeatedly processing the entire sequence, the model only needs to compute the additional work associated with the new token.
+            This turns generation into a much cheaper operation. Instead of repeatedly processing the entire sequence, the model only needs to compute the representations for the new token and append them to the cache. Each decode step adds one more entry to the KV cache, so the cache grows incrementally as the response gets longer, but the work per step stays small because only the new token needs to be processed.
           </p>
           <h3 class="post-subheading" id="the-tradeoff-memory">The Tradeoff: Memory</h3>
           <p>
-            The KV cache makes generation efficient, but it must live in GPU memory — and it grows with every token.
+            The KV cache makes generation efficient, but it must live in GPU memory — and it grows with every token. A request with a long prompt and a long generated response will accumulate a large cache. Now imagine a server handling many requests at the same time, each with a different prompt length, a different number of generated tokens, and its own KV cache occupying GPU memory.
           </p>
-          <p>
-            For example, if a request contains:
-          </p>
-          <ul class="simple-list">
-            <li>a long prompt</li>
-            <li>a long generated response</li>
-          </ul>
-          <p>
-            then the model must maintain a large KV cache associated with that request.
-          </p>
-          <p>
-            Now imagine a server handling many requests at the same time.
-          </p>
-          <p>
-            Each request may have:
-          </p>
-          <ul class="simple-list">
-            <li>a different prompt length</li>
-            <li>a different number of generated tokens</li>
-            <li>its own KV cache stored in GPU memory</li>
-          </ul>
           <p>
             This means the inference system must constantly manage growing memory usage while continuing to generate tokens for multiple requests simultaneously.
           </p>
           <p>
-            At this point, hosting an LLM begins to look less like a simple web service and more like a resource management problem.
+            At this point, hosting an LLM begins to look less like a simple web service and more like a resource management problem. The server must carefully balance compute on the GPU, memory consumed by KV caches, and multiple requests generating tokens at different speeds.
           </p>
-          <p>
-            The server must carefully balance:
-          </p>
-          <ul class="simple-list">
-            <li>compute on the GPU</li>
-            <li>memory consumed by KV caches</li>
-            <li>multiple requests generating tokens at different speeds</li>
-          </ul>
           <p>
             These constraints are what make LLM inference systems fundamentally different from traditional backend workloads.
           </p>
@@ -383,7 +355,10 @@
           <p>
             Architecturally, the entire path looks like this:
           </p>
-          <pre><code>Client → FastAPI endpoint → model.generate() → GPU</code></pre>
+          <figure class="post-figure">
+            <img src="naive-server-path.svg" alt="A direct four-step naive server path showing Client, FastAPI endpoint, model.generate(), and GPU in sequence." loading="lazy" />
+            <figcaption>The naive serving path is completely direct: a request moves from the client to the API layer, into model.generate(), and onto the GPU with no scheduler or batching layer in between.</figcaption>
+          </figure>
           <p>
             Each request gets its own call to model.generate(), which runs the full generation loop on the GPU and streams tokens back through SSE. It is about as direct as an inference server can get.
           </p>
@@ -441,27 +416,12 @@
             The change is surgical. The FastAPI API layer stays the same. The only difference is what happens after a request arrives.
           </p>
           <p>
-            In the naive implementation, the architecture looked like this:
-          </p>
-          <pre><code>Client
-             ↓
-          FastAPI endpoint
-             ↓
-          model.generate()
-             ↓
-          GPU</code></pre>
-          <p>
             With vLLM, inference is delegated to an engine that sits between the API layer and the GPU:
           </p>
-          <pre><code>Client
-             ↓
-          FastAPI Server
-             ↓
-          vLLM AsyncLLMEngine
-             ↓
-          Scheduler + KV Cache Manager
-             ↓
-          GPU</code></pre>
+          <figure class="post-figure">
+            <img src="vllm-architecture.svg" alt="A layered vLLM architecture showing Client, FastAPI Server, AsyncLLMEngine, Scheduler and KV Cache management, and GPU execution." loading="lazy" />
+            <figcaption>With vLLM, requests no longer go straight from the API layer into generation. The engine, scheduler, and KV cache manager coordinate work before it reaches the GPU.</figcaption>
+          </figure>
           <p>
             In code, the key change is replacing model.generate() with vLLM’s async engine:
           </p>
@@ -486,50 +446,57 @@
           </p>
           <h3 class="post-subheading" id="how-vllm-manages-inference">How vLLM Manages Inference</h3>
           <p>
-            Each of the concepts below — prefill and decode phases, scheduling, continuous batching, paged attention — could be its own deep dive. There are excellent papers and posts dedicated to each one. Our goal here is different. We want just enough understanding of each idea to see why vLLM behaves so differently from the naive server we built earlier, and to make sense of the benchmark results in the next section.
+            Each of the concepts below — scheduling, continuous batching, paged attention — could be its own deep dive. There are excellent papers and posts dedicated to each one. Our goal here is different. We want just enough understanding of each idea to see why vLLM behaves so differently from the naive server we built earlier, and to make sense of the benchmark results in the next section.
           </p>
           <p>
-            The first thing vLLM does differently is recognize that not all inference work is the same.
-          </p>
-          <p>
-            When a request arrives, the model must first process the entire prompt to build the initial KV cache. This is called the prefill phase. If the prompt has 500 tokens, prefill means running all 500 through the model to establish context. This is a heavy, one-time computation.
-          </p>
-          <p>
-            Once prefill is complete, the model switches to the decode phase — generating new tokens one at a time, reusing the KV cache from earlier steps. Each decode step is much lighter than prefill, but it happens many times.
-          </p>
-          <pre><code>Prefill: process full prompt → create KV cache (heavy, once)
-          Decode:  generate one token → update cache → repeat (light, many times)</code></pre>
-          <p>
-            The naive server was blind to this distinction. It called model.generate() and let the library handle everything internally. vLLM’s engine, on the other hand, explicitly separates prefill and decode because they place very different demands on the GPU. Some requests might be in prefill while others are already decoding. The engine needs to know the difference in order to schedule work intelligently.
+            Earlier we saw that inference naturally splits into two phases: a heavy prefill step that processes the prompt and builds the KV cache, and a lightweight decode loop that generates tokens one at a time. The naive server treated both phases identically — it called model.generate() and let the library handle everything. vLLM’s engine explicitly separates them because they place very different demands on the GPU. Some requests might be in prefill while others are already decoding, and the engine needs to know the difference in order to schedule work intelligently.
           </p>
           <p>
             That is where the scheduler comes in. Once multiple requests are active, the engine has to constantly decide what the GPU should work on next. Some requests are still in prefill. Others are mid-decode. Some have short prompts, others long ones. The scheduler tracks all active requests, knows which phase each one is in, and groups work into batches that keep the GPU busy.
           </p>
-          <p>
-            Conceptually, the scheduler sits between incoming requests and GPU execution:
-          </p>
-          <pre><code>Incoming requests
-                ↓
-             Scheduler
-             /      \
-          Prefill   Decode
-             \      /
-             Batched GPU execution</code></pre>
           <p>
             This is the key shift from the naive server. Requests no longer operate independently — they become units of work that the scheduler coordinates across the whole system.
           </p>
           <p>
             The scheduler’s main technique is continuous batching. In the naive server, concurrent requests behaved roughly like this:
           </p>
-          <pre><code>Request A → GPU
-          Request B → waiting
-          Request C → waiting</code></pre>
+          <div class="post-visual post-visual--sequence">
+            <p class="post-visual-title">Naive concurrency behavior</p>
+            <div class="visual-sequence">
+              <div class="visual-sequence-row">
+                <span class="visual-sequence-index">01</span>
+                <span class="visual-sequence-text">Request A -&gt; GPU</span>
+              </div>
+              <div class="visual-sequence-row">
+                <span class="visual-sequence-index">02</span>
+                <span class="visual-sequence-text">Request B -&gt; waiting</span>
+              </div>
+              <div class="visual-sequence-row">
+                <span class="visual-sequence-index">03</span>
+                <span class="visual-sequence-text">Request C -&gt; waiting</span>
+              </div>
+            </div>
+          </div>
           <p>
             The GPU could handle more work, but the system had no way to combine generation steps across requests. vLLM changes this by dynamically grouping token-generation work from multiple active requests into shared GPU executions:
           </p>
-          <pre><code>Step 1: decode token for A, B, C
-          Step 2: decode token for A, B, C, D
-          Step 3: decode token for A, C, D</code></pre>
+          <div class="post-visual post-visual--sequence">
+            <p class="post-visual-title">Continuous batching over time</p>
+            <div class="visual-sequence">
+              <div class="visual-sequence-row">
+                <span class="visual-sequence-index">01</span>
+                <span class="visual-sequence-text">Step 1: decode token for A, B, C</span>
+              </div>
+              <div class="visual-sequence-row">
+                <span class="visual-sequence-index">02</span>
+                <span class="visual-sequence-text">Step 2: decode token for A, B, C, D</span>
+              </div>
+              <div class="visual-sequence-row">
+                <span class="visual-sequence-index">03</span>
+                <span class="visual-sequence-text">Step 3: decode token for A, C, D</span>
+              </div>
+            </div>
+          </div>
           <p>
             Requests can enter the batch while others are already running. Shorter requests leave as soon as they finish. The batch changes over time instead of being fixed upfront — which is why it is called continuous batching. This is especially well suited to LLM serving, because decode already happens one token at a time. The scheduler exploits that structure to keep the GPU busy across many users at once.
           </p>
@@ -542,11 +509,27 @@
           <p>
             vLLM addresses this with paged attention. Instead of allocating one large continuous block per request, the KV cache is split into smaller pages that can be assigned and reused flexibly:
           </p>
-          <pre><code>KV Cache Memory
-           ├─ Page 1 → Request A
-           ├─ Page 2 → Request B
-           ├─ Page 3 → Request A
-           ├─ Page 4 → Request C</code></pre>
+          <div class="post-visual post-visual--pages">
+            <p class="post-visual-title">Paged KV cache</p>
+            <div class="visual-page-grid">
+              <div class="visual-page-card">
+                <span class="visual-page-name">Page 1</span>
+                <span class="visual-page-owner">Request A</span>
+              </div>
+              <div class="visual-page-card">
+                <span class="visual-page-name">Page 2</span>
+                <span class="visual-page-owner">Request B</span>
+              </div>
+              <div class="visual-page-card">
+                <span class="visual-page-name">Page 3</span>
+                <span class="visual-page-owner">Request A</span>
+              </div>
+              <div class="visual-page-card">
+                <span class="visual-page-name">Page 4</span>
+                <span class="visual-page-owner">Request C</span>
+              </div>
+            </div>
+          </div>
           <p>
             Paged attention does for KV cache memory what virtual memory does for general-purpose systems: it makes allocation flexible and reduces waste. Pages from completed requests can be immediately recycled to new ones, so memory utilization stays high even as requests enter and leave the system continuously.
           </p>

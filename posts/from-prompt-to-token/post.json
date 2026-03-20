@@ -21,7 +21,8 @@
       "text": "Over the past few years, large language models have become a new kind of infrastructure. Most developers interact with them through APIs that look something like this:"
     },
     {
-      "type": "code",
+      "type": "visual",
+      "variant": "mono",
       "text": "POST /chat/completions"
     },
     {
@@ -85,8 +86,10 @@
       "text": "At a high level, the pipeline looks like this:"
     },
     {
-      "type": "code",
-      "text": "User Prompt\n     ↓\nTokenization\n     ↓\nModel processes tokens\n     ↓\nNext token predicted\n     ↓\nToken appended\n     ↓\nRepeat"
+      "type": "image",
+      "src": "inference-pipeline.svg",
+      "alt": "A sketch-style inference pipeline showing User Prompt, Tokenization, Model processes tokens, Next token predicted, Token appended, and Repeat with a loop back.",
+      "caption": "A high-level view of inference: the prompt is tokenized, processed by the model, extended with the next token, and the loop repeats until the response ends."
     },
     {
       "type": "paragraph",
@@ -109,7 +112,8 @@
       "text": "For example, the prompt:"
     },
     {
-      "type": "code",
+      "type": "visual",
+      "variant": "mono",
       "text": "Explain how transformers work"
     },
     {
@@ -117,8 +121,15 @@
       "text": "might be converted into something like:"
     },
     {
-      "type": "code",
-      "text": "[1043, 9821, 512, 1943]"
+      "type": "visual",
+      "variant": "token_row",
+      "title": "Prompt after tokenization",
+      "tokens": [
+        "1043",
+        "9821",
+        "512",
+        "1943"
+      ]
     },
     {
       "type": "paragraph",
@@ -157,28 +168,14 @@
       "text": "Conceptually:"
     },
     {
-      "type": "code",
-      "text": "tokens -> model -> probabilities for next token"
+      "type": "image",
+      "src": "black-box-mental-model.svg",
+      "alt": "A conceptual black-box mental model showing tokenized input on the left, a dark model box in the center, and next-token probabilities on the right.",
+      "caption": "A useful serving abstraction: feed tokenized input into the model, treat the transformer internals as a black box, and read out probabilities for the next token."
     },
     {
       "type": "paragraph",
       "text": "The model reads the tokens in the prompt, performs a large amount of computation internally, and outputs a probability distribution over the next possible token."
-    },
-    {
-      "type": "paragraph",
-      "text": "For example, given the prompt:"
-    },
-    {
-      "type": "code",
-      "text": "Explain how transformers work"
-    },
-    {
-      "type": "paragraph",
-      "text": "the model might predict something like:"
-    },
-    {
-      "type": "code",
-      "text": "\"by\" : 0.32\n\"using\" : 0.18\n\"through\" : 0.12\n..."
     },
     {
       "type": "paragraph",
@@ -206,19 +203,18 @@
     },
     {
       "type": "paragraph",
-      "text": "Conceptually, generation looks like this:"
-    },
-    {
-      "type": "code",
-      "text": "while response_not_finished:\n    next_token = model(tokens)\n    tokens.append(next_token)"
-    },
-    {
-      "type": "paragraph",
       "text": "Starting from our earlier prompt, the model might produce a sequence like this:"
     },
     {
-      "type": "code",
-      "text": "Explain how transformers work\nExplain how transformers work by\nExplain how transformers work by processing\nExplain how transformers work by processing sequences"
+      "type": "visual",
+      "variant": "sequence",
+      "title": "Sequence grows one token at a time",
+      "rows": [
+        "Explain how transformers work",
+        "Explain how transformers work by",
+        "Explain how transformers work by processing",
+        "Explain how transformers work by processing sequences"
+      ]
     },
     {
       "type": "paragraph",
@@ -249,36 +245,15 @@
       "text": "Consider what happens if the model processes the entire sequence from scratch every time."
     },
     {
-      "type": "paragraph",
-      "text": "Step 1:"
-    },
-    {
-      "type": "code",
-      "text": "model(prompt)"
-    },
-    {
-      "type": "paragraph",
-      "text": "Step 2:"
-    },
-    {
-      "type": "code",
-      "text": "model(prompt + token1)"
-    },
-    {
-      "type": "paragraph",
-      "text": "Step 3:"
-    },
-    {
-      "type": "code",
-      "text": "model(prompt + token1 + token2)"
-    },
-    {
-      "type": "paragraph",
-      "text": "Step 4:"
-    },
-    {
-      "type": "code",
-      "text": "model(prompt + token1 + token2 + token3)"
+      "type": "visual",
+      "variant": "sequence",
+      "title": "Naive repeated recomputation",
+      "rows": [
+        "model(prompt)",
+        "model(prompt + token1)",
+        "model(prompt + token1 + token2)",
+        "model(prompt + token1 + token2 + token3)"
+      ]
     },
     {
       "type": "paragraph",
@@ -294,23 +269,7 @@
     },
     {
       "type": "paragraph",
-      "text": "If the prompt contains 200 tokens and the model generates another 200 tokens, the naive approach would repeatedly process sequences of increasing length:"
-    },
-    {
-      "type": "code",
-      "text": "200 tokens\n201 tokens\n202 tokens\n...\n400 tokens"
-    },
-    {
-      "type": "paragraph",
-      "text": "This means the model would be redoing large portions of the same computation over and over again."
-    },
-    {
-      "type": "paragraph",
-      "text": "For a model with billions of parameters, that would make inference extremely inefficient."
-    },
-    {
-      "type": "paragraph",
-      "text": "Naturally, inference systems try to avoid this repeated work."
+      "text": "This means the model would be redoing large portions of the same computation over and over again. For a model with billions of parameters, that would make inference extremely inefficient. Naturally, inference systems try to avoid this repeated work."
     },
     {
       "type": "heading",
@@ -350,27 +309,29 @@
     },
     {
       "type": "paragraph",
+      "text": "In fact, inference naturally splits into two distinct phases based on this caching behavior."
+    },
+    {
+      "type": "paragraph",
+      "text": "When a request arrives, the model must first process the entire prompt to build the initial KV cache. This is called the prefill phase. If the prompt has 500 tokens, prefill means running all 500 through the model to establish context. This is a heavy, one-time computation."
+    },
+    {
+      "type": "paragraph",
+      "text": "Once prefill is complete, the model switches to the decode phase — generating new tokens one at a time, reusing the KV cache from earlier steps. Each decode step is much lighter than prefill, but it happens many times."
+    },
+    {
+      "type": "paragraph",
       "text": "Conceptually, the process looks like this."
     },
     {
-      "type": "code",
-      "text": "Prompt tokens\n      ↓\nModel computation\n      ↓\nIntermediate representations created\n      ↓\nStored in KV cache"
+      "type": "image",
+      "src": "prefill-decode-kv-cache.excalidraw",
+      "alt": "A combined diagram showing the two phases of inference: prefill processes the full prompt and creates the KV cache, then decode generates tokens one at a time, reusing and incrementally extending the cache.",
+      "caption": "The two phases of inference: prefill processes the entire prompt to build the KV cache, then decode generates tokens one at a time, reusing the cached state and appending new entries with each step."
     },
     {
       "type": "paragraph",
-      "text": "Now when the model generates the next token, it can reuse this stored information instead of recomputing everything."
-    },
-    {
-      "type": "code",
-      "text": "Generate token1 using cached state\nGenerate token2 using cached state\nGenerate token3 using cached state"
-    },
-    {
-      "type": "paragraph",
-      "text": "In other words, the model remembers the work it has already done."
-    },
-    {
-      "type": "paragraph",
-      "text": "This turns generation into a much cheaper operation. Instead of repeatedly processing the entire sequence, the model only needs to compute the additional work associated with the new token."
+      "text": "This turns generation into a much cheaper operation. Instead of repeatedly processing the entire sequence, the model only needs to compute the representations for the new token and append them to the cache. Each decode step adds one more entry to the KV cache, so the cache grows incrementally as the response gets longer, but the work per step stays small because only the new token needs to be processed."
     },
     {
       "type": "heading",
@@ -378,38 +339,7 @@
     },
     {
       "type": "paragraph",
-      "text": "The KV cache makes generation efficient, but it must live in GPU memory — and it grows with every token."
-    },
-    {
-      "type": "paragraph",
-      "text": "For example, if a request contains:"
-    },
-    {
-      "type": "list",
-      "items": [
-        "a long prompt",
-        "a long generated response"
-      ]
-    },
-    {
-      "type": "paragraph",
-      "text": "then the model must maintain a large KV cache associated with that request."
-    },
-    {
-      "type": "paragraph",
-      "text": "Now imagine a server handling many requests at the same time."
-    },
-    {
-      "type": "paragraph",
-      "text": "Each request may have:"
-    },
-    {
-      "type": "list",
-      "items": [
-        "a different prompt length",
-        "a different number of generated tokens",
-        "its own KV cache stored in GPU memory"
-      ]
+      "text": "The KV cache makes generation efficient, but it must live in GPU memory — and it grows with every token. A request with a long prompt and a long generated response will accumulate a large cache. Now imagine a server handling many requests at the same time, each with a different prompt length, a different number of generated tokens, and its own KV cache occupying GPU memory."
     },
     {
       "type": "paragraph",
@@ -417,19 +347,7 @@
     },
     {
       "type": "paragraph",
-      "text": "At this point, hosting an LLM begins to look less like a simple web service and more like a resource management problem."
-    },
-    {
-      "type": "paragraph",
-      "text": "The server must carefully balance:"
-    },
-    {
-      "type": "list",
-      "items": [
-        "compute on the GPU",
-        "memory consumed by KV caches",
-        "multiple requests generating tokens at different speeds"
-      ]
+      "text": "At this point, hosting an LLM begins to look less like a simple web service and more like a resource management problem. The server must carefully balance compute on the GPU, memory consumed by KV caches, and multiple requests generating tokens at different speeds."
     },
     {
       "type": "paragraph",
@@ -477,8 +395,10 @@
       "text": "Architecturally, the entire path looks like this:"
     },
     {
-      "type": "code",
-      "text": "Client → FastAPI endpoint → model.generate() → GPU"
+      "type": "image",
+      "src": "naive-server-path.svg",
+      "alt": "A direct four-step naive server path showing Client, FastAPI endpoint, model.generate(), and GPU in sequence.",
+      "caption": "The naive serving path is completely direct: a request moves from the client to the API layer, into model.generate(), and onto the GPU with no scheduler or batching layer in between."
     },
     {
       "type": "paragraph",
@@ -570,19 +490,13 @@
     },
     {
       "type": "paragraph",
-      "text": "In the naive implementation, the architecture looked like this:"
-    },
-    {
-      "type": "code",
-      "text": "Client\n   ↓\nFastAPI endpoint\n   ↓\nmodel.generate()\n   ↓\nGPU"
-    },
-    {
-      "type": "paragraph",
       "text": "With vLLM, inference is delegated to an engine that sits between the API layer and the GPU:"
     },
     {
-      "type": "code",
-      "text": "Client\n   ↓\nFastAPI Server\n   ↓\nvLLM AsyncLLMEngine\n   ↓\nScheduler + KV Cache Manager\n   ↓\nGPU"
+      "type": "image",
+      "src": "vllm-architecture.svg",
+      "alt": "A layered vLLM architecture showing Client, FastAPI Server, AsyncLLMEngine, Scheduler and KV Cache management, and GPU execution.",
+      "caption": "With vLLM, requests no longer go straight from the API layer into generation. The engine, scheduler, and KV cache manager coordinate work before it reaches the GPU."
     },
     {
       "type": "paragraph",
@@ -606,39 +520,15 @@
     },
     {
       "type": "paragraph",
-      "text": "Each of the concepts below — prefill and decode phases, scheduling, continuous batching, paged attention — could be its own deep dive. There are excellent papers and posts dedicated to each one. Our goal here is different. We want just enough understanding of each idea to see why vLLM behaves so differently from the naive server we built earlier, and to make sense of the benchmark results in the next section."
+      "text": "Each of the concepts below — scheduling, continuous batching, paged attention — could be its own deep dive. There are excellent papers and posts dedicated to each one. Our goal here is different. We want just enough understanding of each idea to see why vLLM behaves so differently from the naive server we built earlier, and to make sense of the benchmark results in the next section."
     },
     {
       "type": "paragraph",
-      "text": "The first thing vLLM does differently is recognize that not all inference work is the same."
-    },
-    {
-      "type": "paragraph",
-      "text": "When a request arrives, the model must first process the entire prompt to build the initial KV cache. This is called the prefill phase. If the prompt has 500 tokens, prefill means running all 500 through the model to establish context. This is a heavy, one-time computation."
-    },
-    {
-      "type": "paragraph",
-      "text": "Once prefill is complete, the model switches to the decode phase — generating new tokens one at a time, reusing the KV cache from earlier steps. Each decode step is much lighter than prefill, but it happens many times."
-    },
-    {
-      "type": "code",
-      "text": "Prefill: process full prompt → create KV cache (heavy, once)\nDecode:  generate one token → update cache → repeat (light, many times)"
-    },
-    {
-      "type": "paragraph",
-      "text": "The naive server was blind to this distinction. It called model.generate() and let the library handle everything internally. vLLM’s engine, on the other hand, explicitly separates prefill and decode because they place very different demands on the GPU. Some requests might be in prefill while others are already decoding. The engine needs to know the difference in order to schedule work intelligently."
+      "text": "Earlier we saw that inference naturally splits into two phases: a heavy prefill step that processes the prompt and builds the KV cache, and a lightweight decode loop that generates tokens one at a time. The naive server treated both phases identically — it called model.generate() and let the library handle everything. vLLM’s engine explicitly separates them because they place very different demands on the GPU. Some requests might be in prefill while others are already decoding, and the engine needs to know the difference in order to schedule work intelligently."
     },
     {
       "type": "paragraph",
       "text": "That is where the scheduler comes in. Once multiple requests are active, the engine has to constantly decide what the GPU should work on next. Some requests are still in prefill. Others are mid-decode. Some have short prompts, others long ones. The scheduler tracks all active requests, knows which phase each one is in, and groups work into batches that keep the GPU busy."
-    },
-    {
-      "type": "paragraph",
-      "text": "Conceptually, the scheduler sits between incoming requests and GPU execution:"
-    },
-    {
-      "type": "code",
-      "text": "Incoming requests\n      ↓\n   Scheduler\n   /      \\\nPrefill   Decode\n   \\      /\n   Batched GPU execution"
     },
     {
       "type": "paragraph",
@@ -649,16 +539,28 @@
       "text": "The scheduler’s main technique is continuous batching. In the naive server, concurrent requests behaved roughly like this:"
     },
     {
-      "type": "code",
-      "text": "Request A → GPU\nRequest B → waiting\nRequest C → waiting"
+      "type": "visual",
+      "variant": "sequence",
+      "title": "Naive concurrency behavior",
+      "rows": [
+        "Request A -> GPU",
+        "Request B -> waiting",
+        "Request C -> waiting"
+      ]
     },
     {
       "type": "paragraph",
       "text": "The GPU could handle more work, but the system had no way to combine generation steps across requests. vLLM changes this by dynamically grouping token-generation work from multiple active requests into shared GPU executions:"
     },
     {
-      "type": "code",
-      "text": "Step 1: decode token for A, B, C\nStep 2: decode token for A, B, C, D\nStep 3: decode token for A, C, D"
+      "type": "visual",
+      "variant": "sequence",
+      "title": "Continuous batching over time",
+      "rows": [
+        "Step 1: decode token for A, B, C",
+        "Step 2: decode token for A, B, C, D",
+        "Step 3: decode token for A, C, D"
+      ]
     },
     {
       "type": "paragraph",
@@ -677,8 +579,27 @@
       "text": "vLLM addresses this with paged attention. Instead of allocating one large continuous block per request, the KV cache is split into smaller pages that can be assigned and reused flexibly:"
     },
     {
-      "type": "code",
-      "text": "KV Cache Memory\n ├─ Page 1 → Request A\n ├─ Page 2 → Request B\n ├─ Page 3 → Request A\n ├─ Page 4 → Request C"
+      "type": "visual",
+      "variant": "pages",
+      "title": "Paged KV cache",
+      "items": [
+        {
+          "page": "Page 1",
+          "owner": "Request A"
+        },
+        {
+          "page": "Page 2",
+          "owner": "Request B"
+        },
+        {
+          "page": "Page 3",
+          "owner": "Request A"
+        },
+        {
+          "page": "Page 4",
+          "owner": "Request C"
+        }
+      ]
     },
     {
       "type": "paragraph",

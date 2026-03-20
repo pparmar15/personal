@@ -108,7 +108,9 @@
           "Docker",
           "Terraform",
           "Kafka",
-          "Kubernetes"
+          "Kubernetes",
+          "Grafana", 
+          "Prometheus"
         ]
       },
       {
