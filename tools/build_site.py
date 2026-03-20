@@ -181,7 +181,6 @@ def main() -> None:
                     {
                         "meta_line": escape_html(post_meta(post)),
                         "heading": escape_html(post["title"]),
-                        "lead_html": render_optional_post_lead(post.get("lead", "")),
                         "toc_html": indent_block(render_post_toc(post_headings), 10),
                         "content_blocks": indent_block(
                             render_post_content(post["content"], post_headings),
@@ -305,21 +304,6 @@ def render_link_attrs(item: dict, *, default_class: str | None = None) -> str:
 
 def render_list_items(items: list[str]) -> str:
     return "\n".join(f"<li>{escape_html(item)}</li>" for item in items)
-
-
-def render_paragraphs(value: str | list[str], *, class_name: str | None = None) -> str:
-    items = [value] if isinstance(value, str) else value
-    class_attr = f' class="{escape_attr(class_name)}"' if class_name else ""
-    return "\n".join(
-        "\n".join(
-            [
-                f"<p{class_attr}>",
-                f"  {escape_html(item)}",
-                "</p>",
-            ]
-        )
-        for item in items
-    )
 
 
 def render_intro_paragraphs(value: str | list[str]) -> str:
@@ -496,18 +480,6 @@ def render_resume_section(heading: str, content_html: str) -> str:
     )
 
 
-def render_optional_post_lead(lead: str) -> str:
-    if not lead.strip():
-        return ""
-    return "\n".join(
-        [
-            '          <p class="post-lead">',
-            f"            {escape_html(lead)}",
-            "          </p>",
-        ]
-    )
-
-
 def render_post_content(blocks: list[dict], heading_items: list[dict]) -> str:
     lines = []
     heading_iter = iter(heading_items)
@@ -517,8 +489,6 @@ def render_post_content(blocks: list[dict], heading_items: list[dict]) -> str:
             lines.append("<p>")
             lines.append(f"  {escape_html(block['text'])}")
             lines.append("</p>")
-        elif block_type == "question":
-            lines.append(f'<p class="post-question">{escape_html(block["text"])}</p>')
         elif block_type == "heading":
             heading = next(heading_iter)
             heading_text = escape_html(block["text"])
@@ -534,10 +504,10 @@ def render_post_content(blocks: list[dict], heading_items: list[dict]) -> str:
             lines.append('<ul class="simple-list">')
             lines.append(indent_block(render_list_items(block["items"]), 2))
             lines.append("</ul>")
-        elif block_type == "table":
-            lines.append(render_post_table(block))
         elif block_type == "code":
             lines.append(f"<pre><code>{escape_html(block['text'])}</code></pre>")
+        elif block_type == "visual":
+            lines.append(render_post_visual(block))
         elif block_type == "image":
             lines.append(render_post_image(block))
         else:
@@ -633,23 +603,54 @@ def render_post_image(block: dict) -> str:
     return "\n".join(figure)
 
 
-def render_post_table(block: dict) -> str:
-    headers = "".join(f"<th>{escape_html(header)}</th>" for header in block["headers"])
-    rows = []
-    for row in block["rows"]:
-        cells = "".join(f"<td>{escape_html(str(cell))}</td>" for cell in row)
-        rows.append(f"<tr>{cells}</tr>")
+def render_post_visual(block: dict) -> str:
+    variant = block["variant"]
+    classes = f'post-visual post-visual--{escape_attr(variant)}'
+    lines = [f'<div class="{classes}">']
 
-    return "\n".join(
-        [
-            '<div class="post-table-wrap">',
-            '  <table class="post-table">',
-            f"    <thead><tr>{headers}</tr></thead>",
-            f"    <tbody>{''.join(rows)}</tbody>",
-            "  </table>",
-            "</div>",
-        ]
-    )
+    if block.get("title"):
+        lines.append(f'  <p class="post-visual-title">{escape_html(block["title"])}</p>')
+
+    if variant == "mono":
+        lines.append('  <div class="visual-mono-card">')
+        lines.append(f'    <span class="visual-mono-text">{escape_html(block["text"])}</span>')
+        lines.append("  </div>")
+    elif variant == "token_row":
+        lines.append('  <div class="visual-token-row">')
+        lines.append('    <div class="visual-token-chips">')
+        for token in block["tokens"]:
+            lines.append(f'      <span class="visual-token-chip">{escape_html(str(token))}</span>')
+        lines.append("    </div>")
+        lines.append("  </div>")
+    elif variant == "sequence":
+        lines.append('  <div class="visual-sequence">')
+        for index, row in enumerate(block["rows"], start=1):
+            lines.extend(
+                [
+                    '    <div class="visual-sequence-row">',
+                    f'      <span class="visual-sequence-index">{index:02d}</span>',
+                    f'      <span class="visual-sequence-text">{escape_html(row)}</span>',
+                    "    </div>",
+                ]
+            )
+        lines.append("  </div>")
+    elif variant == "pages":
+        lines.append('  <div class="visual-page-grid">')
+        for item in block["items"]:
+            lines.extend(
+                [
+                    '    <div class="visual-page-card">',
+                    f'      <span class="visual-page-name">{escape_html(item["page"])}</span>',
+                    f'      <span class="visual-page-owner">{escape_html(item["owner"])}</span>',
+                    "    </div>",
+                ]
+            )
+        lines.append("  </div>")
+    else:
+        raise ValueError(f"Unsupported visual variant: {variant}")
+
+    lines.append("</div>")
+    return "\n".join(lines)
 
 
 def render_footer(site_name: str, *, include_copy: bool) -> str:
