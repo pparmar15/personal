@@ -65,7 +65,10 @@ def main() -> None:
                 {
                     "eyebrow": escape_html(data["blog"]["eyebrow"]),
                     "heading": escape_html(data["blog"]["heading"]),
-                    "lead": escape_html(data["blog"]["lead"]),
+                    "lead_html": indent_block(
+                        render_optional_lead(data["blog"]["lead"]),
+                        10,
+                    ),
                     "filter_buttons": indent_block(
                         render_filter_buttons(data["blog"]["filter_order"]),
                         12,
@@ -505,6 +508,18 @@ def render_resume_section(heading: str, content_html: str) -> str:
             f"          <h2>{escape_html(heading)}</h2>",
             indent_block(content_html, 8),
             "        </section>",
+        ]
+    )
+
+
+def render_optional_lead(lead: str) -> str:
+    if not lead.strip():
+        return ""
+    return "\n".join(
+        [
+            '<p class="lead">',
+            f"  {escape_html(lead)}",
+            "</p>",
         ]
     )
 

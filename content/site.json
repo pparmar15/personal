@@ -40,8 +40,8 @@
     "page_title": "Blog | Parth Parmar",
     "description": "Blog by Parth Parmar covering ML infrastructure, platform engineering, and reliable systems.",
     "eyebrow": "Blog",
-    "heading": "Notes on ML infrastructure, platform work, and reliable systems.",
-    "lead": "Short writing on the kinds of engineering problems I want to spend more time on.",
+    "heading": "Short writing on the kinds of engineering problems I want to spend more time on",
+    "lead": "",
     "filter_order": [
       "Serving",
       "Platform",
