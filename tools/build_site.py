@@ -504,6 +504,8 @@ def render_post_content(blocks: list[dict], heading_items: list[dict]) -> str:
             lines.append('<ul class="simple-list">')
             lines.append(indent_block(render_list_items(block["items"]), 2))
             lines.append("</ul>")
+        elif block_type == "link_list":
+            lines.append(render_post_link_list(block["items"]))
         elif block_type == "code":
             lines.append(f"<pre><code>{escape_html(block['text'])}</code></pre>")
         elif block_type == "visual":
@@ -603,6 +605,24 @@ def render_post_image(block: dict) -> str:
     return "\n".join(figure)
 
 
+def render_post_link_list(items: list[dict]) -> str:
+    entries = []
+    for item in items:
+        label = escape_html(item.get("label", item["href"]))
+        entries.append(
+            f'<li><a href="{escape_attr(item["href"])}"'
+            f'{render_link_attrs(item, default_class="underlined-link")}>{label}</a></li>'
+        )
+
+    return "\n".join(
+        [
+            '<ul class="simple-list">',
+            indent_block("\n".join(entries), 2),
+            "</ul>",
+        ]
+    )
+
+
 def render_post_visual(block: dict) -> str:
     variant = block["variant"]
     classes = f'post-visual post-visual--{escape_attr(variant)}'
@@ -666,7 +686,7 @@ def render_footer(site_name: str, *, include_copy: bool) -> str:
 
 
 def post_meta(post: dict) -> str:
-    return f"{post['date']} - {', '.join(post['tags'])}"
+    return ", ".join(post["tags"])
 
 
 def post_href(post: dict) -> str:

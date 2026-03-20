@@ -38,7 +38,7 @@
       </header>
       <main class="post-layout">
         <article class="post-body reveal">
-          <p class="blog-meta">March 14, 2026 - Platform, Serving</p>
+          <p class="blog-meta">Platform, Serving</p>
           <h1>Understanding LLM Inference by Building a Server From Scratch</h1>
           <h2 class="part-heading" id="introduction">Introduction</h2>
           <p>
@@ -162,7 +162,7 @@
             The token with the highest probability is typically chosen as the next token in the generated response.
           </p>
           <p>
-            By treating the model this way, we can focus on the system behavior around the model — how requests are processed, how memory grows, and how computation is scheduled — which are the core challenges of building efficient LLM inference systems.
+            By treating the model this way, we can focus on the system behavior around the model: how requests are processed, how memory grows, and how computation is scheduled. These are the core challenges of building efficient LLM inference systems.
           </p>
           <p>
             But generation does not stop after producing one token.
@@ -208,7 +208,7 @@
             This is also why responses from systems like ChatGPT often appear gradually, with tokens streaming back one by one.
           </p>
           <p>
-            At first glance, this loop seems simple enough — but notice that the model is being called with a longer sequence every step.
+            At first glance, this loop seems simple enough, but notice that the model is being called with a longer sequence every step.
           </p>
           <h3 class="post-subheading" id="the-hidden-cost-of-repeated-computation">The Hidden Cost of Repeated Computation</h3>
           <p>
@@ -282,7 +282,7 @@
             When a request arrives, the model must first process the entire prompt to build the initial KV cache. This is called the prefill phase. If the prompt has 500 tokens, prefill means running all 500 through the model to establish context. This is a heavy, one-time computation.
           </p>
           <p>
-            Once prefill is complete, the model switches to the decode phase — generating new tokens one at a time, reusing the KV cache from earlier steps. Each decode step is much lighter than prefill, but it happens many times.
+            Once prefill is complete, the model switches to the decode phase, generating new tokens one at a time, reusing the KV cache from earlier steps. Each decode step is much lighter than prefill, but it happens many times.
           </p>
           <p>
             Conceptually, the process looks like this.
@@ -296,7 +296,7 @@
           </p>
           <h3 class="post-subheading" id="the-tradeoff-memory">The Tradeoff: Memory</h3>
           <p>
-            The KV cache makes generation efficient, but it must live in GPU memory — and it grows with every token. A request with a long prompt and a long generated response will accumulate a large cache. Now imagine a server handling many requests at the same time, each with a different prompt length, a different number of generated tokens, and its own KV cache occupying GPU memory.
+            The KV cache makes generation efficient, but it must live in GPU memory, and it grows with every token. A request with a long prompt and a long generated response will accumulate a large cache. Now imagine a server handling many requests at the same time, each with a different prompt length, a different number of generated tokens, and its own KV cache occupying GPU memory.
           </p>
           <p>
             This means the inference system must constantly manage growing memory usage while continuing to generate tokens for multiple requests simultaneously.
@@ -309,7 +309,7 @@
           </p>
           <h2 class="part-heading" id="building-a-naive-llm-server">Building a Naive LLM Server</h2>
           <p>
-            Now that we have a mental model for how generation works — tokenize, predict, append, repeat — the next step is to see what happens when we actually try to serve a model.
+            Now that we have a mental model for how generation works (tokenize, predict, append, repeat), the next step is to see what happens when we actually try to serve a model.
           </p>
           <p>
             The simplest approach is to load the model into GPU memory, expose an HTTP endpoint, and call the model whenever a request arrives.
@@ -319,7 +319,7 @@
           </p>
           <h3 class="post-subheading" id="setup">Setup</h3>
           <p>
-            For these experiments we use Qwen2.5-14B-Instruct, a 14-billion-parameter instruction-tuned model. It is large enough that efficiency matters, but still fits on a single GPU with the right instance. We run it on an AWS g6e.xlarge, which provides an NVIDIA L40S with 48 GB of VRAM — enough headroom for the model weights in FP16 plus the KV caches that grow during generation.
+            For these experiments we use Qwen2.5-14B-Instruct, a 14-billion-parameter instruction-tuned model. It is large enough that efficiency matters, but still fits on a single GPU with the right instance. We run it on an AWS g6e.xlarge, which provides an NVIDIA L40S with 48 GB of VRAM, enough headroom for the model weights in FP16 plus the KV caches that grow during generation.
           </p>
           <p>
             The server itself is deliberately simple. A FastAPI application loads the model into GPU memory at startup using the Hugging Face Transformers library. When a request arrives, the server tokenizes the prompt, calls model.generate(), and streams the resulting tokens back to the client over an SSE connection. There is no batching, no scheduler, and no memory management beyond what PyTorch provides by default.
@@ -363,11 +363,11 @@
             Each request gets its own call to model.generate(), which runs the full generation loop on the GPU and streams tokens back through SSE. It is about as direct as an inference server can get.
           </p>
           <p>
-            Alongside the server, we set up a lightweight observability stack to capture what happens during benchmarks. The server instruments every request with Prometheus metrics — time to first token, end-to-end latency, inter-token latency, and in-flight request count. A separate GPU exporter polls nvidia-smi and publishes GPU utilization, memory usage, and power draw as Prometheus gauges, scraped at one-second intervals. On the client side, a load generator sends concurrent streaming requests and records per-request timing directly from the SSE stream. Between server-side metrics, GPU telemetry, and client-side measurements, we can reconstruct a detailed picture of how the system behaves at each concurrency level.
+            Alongside the server, we set up a lightweight observability stack to capture what happens during benchmarks. The server instruments every request with Prometheus metrics: time to first token, end-to-end latency, inter-token latency, and in-flight request count. A separate GPU exporter polls nvidia-smi and publishes GPU utilization, memory usage, and power draw as Prometheus gauges, scraped at one-second intervals. On the client side, a load generator sends concurrent streaming requests and records per-request timing directly from the SSE stream. Between server-side metrics, GPU telemetry, and client-side measurements, we can reconstruct a detailed picture of how the system behaves at each concurrency level.
           </p>
           <h3 class="post-subheading" id="testing-the-server">Testing the Server</h3>
           <p>
-            To understand how this server behaves under load, we ran a concurrency sweep. Every request used the same prompt and generated approximately 75 tokens. We sent 64 requests at each concurrency level — 1, 4, 8, 16, 32, and 64 — and recorded latency, inter-token latency, throughput, and GPU utilization throughout.
+            To understand how this server behaves under load, we ran a concurrency sweep. Every request used the same prompt and generated approximately 75 tokens. We sent 64 requests at each concurrency level (1, 4, 8, 16, 32, and 64) and recorded latency, inter-token latency, throughput, and GPU utilization throughout.
           </p>
           <figure class="post-figure">
             <img src="naive-summary-four-panel.svg" alt="A four-panel summary of the naive server showing total latency, inter-token latency, throughput, and GPU utilization with in-flight requests." loading="lazy" />
@@ -377,16 +377,16 @@
             The four panels tell the full story.
           </p>
           <p>
-            Total latency rises almost linearly with concurrency. At concurrency 1, a request completes in about 2.8 seconds. By concurrency 8 it takes roughly 45 seconds. At concurrency 64, the same request takes nearly five minutes. The model did not change, the hardware did not change — the only variable was how many requests were in flight at the same time.
+            Total latency rises almost linearly with concurrency. At concurrency 1, a request completes in about 2.8 seconds. By concurrency 8 it takes roughly 45 seconds. At concurrency 64, the same request takes nearly five minutes. The model did not change, the hardware did not change. The only variable was how many requests were in flight at the same time.
           </p>
           <p>
             Inter-token latency follows the same curve. At concurrency 1, tokens arrive every ~38 milliseconds, fast enough to feel interactive. At concurrency 8, the gap widens to ~600 milliseconds per token. By concurrency 64 it reaches about 4 seconds between tokens. This is what a user actually experiences: a stream that starts out smooth and gradually stalls as the server takes on more work.
           </p>
           <p>
-            Throughput is the most revealing panel. At concurrency 1, the server generates about 26 tokens per second. You might expect throughput to climb as we add concurrency — more requests should mean more useful work. Instead, throughput actually drops to around 13–16 tokens per second and then flattens completely. The server accumulates more in-flight requests without producing proportionally more tokens. The extra concurrency is absorbed almost entirely as wait time.
+            Throughput is the most revealing panel. At concurrency 1, the server generates about 26 tokens per second. You might expect throughput to climb as we add concurrency, since more requests should mean more useful work. Instead, throughput actually drops to around 13–16 tokens per second and then flattens completely. The server accumulates more in-flight requests without producing proportionally more tokens. The extra concurrency is absorbed almost entirely as wait time.
           </p>
           <p>
-            GPU utilization explains why. Averaged across the full sweep, GPU utilization sits around 59%. It spikes to 97% during bursts of active generation, but drops during the gaps between sequential generation calls. The server is not keeping the GPU consistently busy. Even though requests are piling up, the scheduling model — one model.generate() call at a time — leaves the hardware underutilized between requests.
+            GPU utilization explains why. Averaged across the full sweep, GPU utilization sits around 59%. It spikes to 97% during bursts of active generation, but drops during the gaps between sequential generation calls. The server is not keeping the GPU consistently busy. Even though requests are piling up, the scheduling model (one model.generate() call at a time) leaves the hardware underutilized between requests.
           </p>
           <h3 class="post-subheading" id="why-this-approach-breaks-down">Why This Approach Breaks Down</h3>
           <p>
@@ -409,7 +409,7 @@
           </p>
           <h2 class="part-heading" id="hosting-the-model-with-vllm">Hosting the Model with vLLM</h2>
           <p>
-            The naive server’s core limitation was not FastAPI, the model, or the hardware. It was the absence of any coordination between requests. Each call to model.generate() ran its own generation loop, and the server had no way to share GPU work across users. To fix that, we replace the inference backend with vLLM — an engine designed specifically for serving large language models.
+            The naive server’s core limitation was not FastAPI, the model, or the hardware. It was the absence of any coordination between requests. Each call to model.generate() ran its own generation loop, and the server had no way to share GPU work across users. To fix that, we replace the inference backend with vLLM, an engine designed specifically for serving large language models.
           </p>
           <h3 class="post-subheading" id="replacing-the-backend">Replacing the Backend</h3>
           <p>
@@ -439,23 +439,23 @@
           async for output in engine.generate(prompt, sampling_params, request_id):
               yield output</code></pre>
           <p>
-            From the outside, the service still behaves like a normal API — a client sends a prompt and receives streamed tokens. But internally, vLLM now controls how requests are executed, how GPU work is scheduled, and how memory is managed. The three key mechanisms it uses are a scheduler that coordinates active requests, continuous batching that keeps the GPU busy, and paged attention that manages KV cache memory efficiently.
+            From the outside, the service still behaves like a normal API. A client sends a prompt and receives streamed tokens. But internally, vLLM now controls how requests are executed, how GPU work is scheduled, and how memory is managed. The three key mechanisms it uses are a scheduler that coordinates active requests, continuous batching that keeps the GPU busy, and paged attention that manages KV cache memory efficiently.
           </p>
           <p>
             To understand why these matter, we need to look at what vLLM sees that the naive server was blind to.
           </p>
           <h3 class="post-subheading" id="how-vllm-manages-inference">How vLLM Manages Inference</h3>
           <p>
-            Each of the concepts below — scheduling, continuous batching, paged attention — could be its own deep dive. There are excellent papers and posts dedicated to each one. Our goal here is different. We want just enough understanding of each idea to see why vLLM behaves so differently from the naive server we built earlier, and to make sense of the benchmark results in the next section.
+            Each of the concepts below (scheduling, continuous batching, paged attention) could be its own deep dive. There are excellent papers and posts dedicated to each one. Our goal here is different. We want just enough understanding of each idea to see why vLLM behaves so differently from the naive server we built earlier, and to make sense of the benchmark results in the next section.
           </p>
           <p>
-            Earlier we saw that inference naturally splits into two phases: a heavy prefill step that processes the prompt and builds the KV cache, and a lightweight decode loop that generates tokens one at a time. The naive server treated both phases identically — it called model.generate() and let the library handle everything. vLLM’s engine explicitly separates them because they place very different demands on the GPU. Some requests might be in prefill while others are already decoding, and the engine needs to know the difference in order to schedule work intelligently.
+            Earlier we saw that inference naturally splits into two phases: a heavy prefill step that processes the prompt and builds the KV cache, and a lightweight decode loop that generates tokens one at a time. The naive server treated both phases identically. It called model.generate() and let the library handle everything. vLLM’s engine explicitly separates them because they place very different demands on the GPU. Some requests might be in prefill while others are already decoding, and the engine needs to know the difference in order to schedule work intelligently.
           </p>
           <p>
             That is where the scheduler comes in. Once multiple requests are active, the engine has to constantly decide what the GPU should work on next. Some requests are still in prefill. Others are mid-decode. Some have short prompts, others long ones. The scheduler tracks all active requests, knows which phase each one is in, and groups work into batches that keep the GPU busy.
           </p>
           <p>
-            This is the key shift from the naive server. Requests no longer operate independently — they become units of work that the scheduler coordinates across the whole system.
+            This is the key shift from the naive server. Requests no longer operate independently. They become units of work that the scheduler coordinates across the whole system.
           </p>
           <p>
             The scheduler’s main technique is continuous batching. In the naive server, concurrent requests behaved roughly like this:
@@ -498,13 +498,13 @@
             </div>
           </div>
           <p>
-            Requests can enter the batch while others are already running. Shorter requests leave as soon as they finish. The batch changes over time instead of being fixed upfront — which is why it is called continuous batching. This is especially well suited to LLM serving, because decode already happens one token at a time. The scheduler exploits that structure to keep the GPU busy across many users at once.
+            Requests can enter the batch while others are already running. Shorter requests leave as soon as they finish. The batch changes over time instead of being fixed upfront, which is why it is called continuous batching. This is especially well suited to LLM serving, because decode already happens one token at a time. The scheduler exploits that structure to keep the GPU busy across many users at once.
           </p>
           <p>
             Continuous batching solves the compute scheduling problem, but memory is the other major constraint. Each active request carries its own KV cache, and as more tokens are processed, that cache grows. With many concurrent requests, memory pressure becomes serious.
           </p>
           <p>
-            A traditional implementation treats the KV cache as large contiguous allocations — one block per request. That wastes memory and leads to fragmentation, especially when requests have different lengths and finish at different times.
+            A traditional implementation treats the KV cache as large contiguous allocations, one block per request. That wastes memory and leads to fragmentation, especially when requests have different lengths and finish at different times.
           </p>
           <p>
             vLLM addresses this with paged attention. Instead of allocating one large continuous block per request, the KV cache is split into smaller pages that can be assigned and reused flexibly:
@@ -535,7 +535,7 @@
           </p>
           <h3 class="post-subheading" id="testing-the-vllm-server">Testing the vLLM Server</h3>
           <p>
-            We ran the same concurrency sweep as before — same model, same instance, same prompt, same concurrency levels (1, 4, 8, 16, 32, 64), 64 requests per level. The only change was the inference backend.
+            We ran the same concurrency sweep as before: same model, same instance, same prompt, same concurrency levels (1, 4, 8, 16, 32, 64), 64 requests per level. The only change was the inference backend.
           </p>
           <figure class="post-figure">
             <img src="vllm-summary-four-panel.svg" alt="A four-panel summary of the vLLM server showing total latency, inter-token latency, throughput, and GPU utilization with in-flight requests." loading="lazy" />
@@ -545,10 +545,10 @@
             The contrast with the naive server is immediate.
           </p>
           <p>
-            Total latency barely moves. At concurrency 1, a request completes in about 2.5 seconds — roughly the same as the naive server. But at concurrency 8, latency is still only ~2.7 seconds, compared to ~45 seconds on the naive server. Even at concurrency 64, the average request finishes in about 3.2 seconds. The naive server took nearly five minutes at the same load. vLLM absorbs concurrency almost invisibly from the user’s perspective.
+            Total latency barely moves. At concurrency 1, a request completes in about 2.5 seconds, roughly the same as the naive server. But at concurrency 8, latency is still only ~2.7 seconds, compared to ~45 seconds on the naive server. Even at concurrency 64, the average request finishes in about 3.2 seconds. The naive server took nearly five minutes at the same load. vLLM absorbs concurrency almost invisibly from the user’s perspective.
           </p>
           <p>
-            Inter-token latency tells the same story. At concurrency 1, tokens arrive every ~40 milliseconds — identical to the naive server. At concurrency 64, inter-token latency only increases to ~49 milliseconds. On the naive server at the same load, tokens arrived 4 seconds apart. Streaming stays smooth and interactive across the entire concurrency range.
+            Inter-token latency tells the same story. At concurrency 1, tokens arrive every ~40 milliseconds, identical to the naive server. At concurrency 64, inter-token latency only increases to ~49 milliseconds. On the naive server at the same load, tokens arrived 4 seconds apart. Streaming stays smooth and interactive across the entire concurrency range.
           </p>
           <p>
             Throughput is where the difference is most dramatic. The naive server peaked at ~26 tokens per second and then dropped as concurrency increased. vLLM scales in the opposite direction: ~25 tokens/s at concurrency 1, ~185 tokens/s at concurrency 8, ~363 tokens/s at concurrency 16, and nearly 1,200 tokens/s at concurrency 64. The same GPU that could not keep up with 4 users on the naive server is now serving 64 users simultaneously with sub-50ms inter-token latency.
@@ -561,14 +561,21 @@
             Serving a large language model efficiently is primarily a systems problem.
           </p>
           <p>
-            The model did not change between our two servers. The hardware did not change. But the naive server took nearly five minutes to complete a request at concurrency 64, while vLLM finished the same request in about 3 seconds — and generated tokens 45 times faster overall. The difference was entirely in how work was scheduled and how memory was managed.
+            The model did not change between our two servers. The hardware did not change. But the naive server took nearly five minutes to complete a request at concurrency 64, while vLLM finished the same request in about 3 seconds, and generated tokens 45 times faster overall. The difference was entirely in how work was scheduled and how memory was managed.
           </p>
           <p>
-            The techniques behind that improvement — continuous batching, paged attention, request-level scheduling — are not new ideas in systems engineering. They are adaptations of scheduling and memory management patterns that have existed in operating systems and databases for decades, applied to the specific constraints of autoregressive generation on GPUs.
+            The techniques behind that improvement (continuous batching, paged attention, request-level scheduling) are not new ideas in systems engineering. They are adaptations of scheduling and memory management patterns that have existed in operating systems and databases for decades, applied to the specific constraints of autoregressive generation on GPUs.
           </p>
           <p>
             In this article, we focused on a single-node setup to build intuition for these core ideas. But real-world deployments introduce additional challenges: handling traffic spikes, scaling across multiple GPUs, managing replicas, and monitoring system health.
           </p>
+          <h2 class="part-heading" id="references">References</h2>
+          <ul class="simple-list">
+            <li><a href="https://arxiv.org/abs/1706.03762" class="underlined-link" target="_blank" rel="noreferrer">Attention Is All You Need</a></li>
+            <li><a href="https://huggingface.co/Qwen/Qwen2.5-14B-Instruct" class="underlined-link" target="_blank" rel="noreferrer">Qwen2.5-14B-Instruct</a></li>
+            <li><a href="https://huggingface.co/learn/llm-course/chapter1/8" class="underlined-link" target="_blank" rel="noreferrer">Deep dive into Text Generation Inference with LLMs</a></li>
+            <li><a href="https://docs.vllm.ai/en/stable/design/arch_overview/" class="underlined-link" target="_blank" rel="noreferrer">Architecture Overview - vLLM</a></li>
+          </ul>
         </article>
           <aside class="post-toc-shell reveal">
             <nav class="post-toc" aria-label="Table of contents">
@@ -606,6 +613,9 @@
               </li>
               <li class="post-toc-group">
                 <a href="#conclusion" data-toc-type="part">Conclusion</a>
+              </li>
+              <li class="post-toc-group">
+                <a href="#references" data-toc-type="part">References</a>
               </li>
               </ul>
             </nav>

@@ -79,17 +79,6 @@ if (tocLinks.length > 0) {
   };
 
   const updateActiveHeading = () => {
-    if (
-      window.innerHeight + window.scrollY >=
-      document.documentElement.scrollHeight - 2
-    ) {
-      const lastEntry = tocEntries[tocEntries.length - 1];
-      if (lastEntry) {
-        setActiveToc(lastEntry.target.id);
-      }
-      return;
-    }
-
     let activeId = tocEntries[0]?.target.id;
 
     tocEntries.forEach(({ target }) => {
