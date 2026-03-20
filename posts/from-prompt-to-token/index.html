@@ -56,7 +56,7 @@
             From the outside, this interaction feels similar to calling any other web service. The request goes in, the answer comes back, and the complexity is hidden behind the API.
           </p>
           <figure class="post-figure">
-            <img src="request-flow.svg" alt="A sketch-style flow showing User Prompt, then LLM Server, then Tokens appear one by one." loading="lazy" />
+            <img src="assets/request-flow.svg" alt="A sketch-style flow showing User Prompt, then LLM Server, then Tokens appear one by one." loading="lazy" />
             <figcaption>A minimal view of the request path: a prompt enters the server, and tokens are emitted incrementally.</figcaption>
           </figure>
           <p>
@@ -91,7 +91,7 @@
             At a high level, the pipeline looks like this:
           </p>
           <figure class="post-figure">
-            <img src="inference-pipeline.svg" alt="A sketch-style inference pipeline showing User Prompt, Tokenization, Model processes tokens, Next token predicted, Token appended, and Repeat with a loop back." loading="lazy" />
+            <img src="assets/inference-pipeline.svg" alt="A sketch-style inference pipeline showing User Prompt, Tokenization, Model processes tokens, Next token predicted, Token appended, and Repeat with a loop back." loading="lazy" />
             <figcaption>A high-level view of inference: the prompt is tokenized, processed by the model, extended with the next token, and the loop repeats until the response ends.</figcaption>
           </figure>
           <p>
@@ -152,7 +152,7 @@
             Conceptually:
           </p>
           <figure class="post-figure">
-            <img src="black-box-mental-model.svg" alt="A conceptual black-box mental model showing tokenized input on the left, a dark model box in the center, and next-token probabilities on the right." loading="lazy" />
+            <img src="assets/black-box-mental-model.svg" alt="A conceptual black-box mental model showing tokenized input on the left, a dark model box in the center, and next-token probabilities on the right." loading="lazy" />
             <figcaption>A useful serving abstraction: feed tokenized input into the model, treat the transformer internals as a black box, and read out probabilities for the next token.</figcaption>
           </figure>
           <p>
@@ -288,7 +288,7 @@
             Conceptually, the process looks like this.
           </p>
           <figure class="post-figure">
-            <img src="prefill-decode-kv-cache.svg" alt="A combined diagram showing the two phases of inference: prefill processes the full prompt and creates the KV cache, then decode generates tokens one at a time, reusing and incrementally extending the cache." loading="lazy" />
+            <img src="assets/prefill-decode-kv-cache.svg" alt="A combined diagram showing the two phases of inference: prefill processes the full prompt and creates the KV cache, then decode generates tokens one at a time, reusing and incrementally extending the cache." loading="lazy" />
             <figcaption>The two phases of inference: prefill processes the entire prompt to build the KV cache, then decode generates tokens one at a time, reusing the cached state and appending new entries with each step.</figcaption>
           </figure>
           <p>
@@ -356,7 +356,7 @@
             Architecturally, the entire path looks like this:
           </p>
           <figure class="post-figure">
-            <img src="naive-server-path.svg" alt="A direct four-step naive server path showing Client, FastAPI endpoint, model.generate(), and GPU in sequence." loading="lazy" />
+            <img src="assets/naive-server-path.svg" alt="A direct four-step naive server path showing Client, FastAPI endpoint, model.generate(), and GPU in sequence." loading="lazy" />
             <figcaption>The naive serving path is completely direct: a request moves from the client to the API layer, into model.generate(), and onto the GPU with no scheduler or batching layer in between.</figcaption>
           </figure>
           <p>
@@ -370,7 +370,7 @@
             To understand how this server behaves under load, we ran a concurrency sweep. Every request used the same prompt and generated approximately 75 tokens. We sent 64 requests at each concurrency level (1, 4, 8, 16, 32, and 64) and recorded latency, inter-token latency, throughput, and GPU utilization throughout.
           </p>
           <figure class="post-figure">
-            <img src="naive-summary-four-panel.svg" alt="A four-panel summary of the naive server showing total latency, inter-token latency, throughput, and GPU utilization with in-flight requests." loading="lazy" />
+            <img src="assets/naive-summary-four-panel.svg" alt="A four-panel summary of the naive server showing total latency, inter-token latency, throughput, and GPU utilization with in-flight requests." loading="lazy" />
             <figcaption>Summary of the naive Hugging Face server under load: latency and inter-token delay rise sharply, throughput flattens, and GPU utilization does not scale cleanly with added in-flight work.</figcaption>
           </figure>
           <p>
@@ -419,7 +419,7 @@
             With vLLM, inference is delegated to an engine that sits between the API layer and the GPU:
           </p>
           <figure class="post-figure">
-            <img src="vllm-architecture.svg" alt="A layered vLLM architecture showing Client, FastAPI Server, AsyncLLMEngine, Scheduler and KV Cache management, and GPU execution." loading="lazy" />
+            <img src="assets/vllm-architecture.svg" alt="A layered vLLM architecture showing Client, FastAPI Server, AsyncLLMEngine, Scheduler and KV Cache management, and GPU execution." loading="lazy" />
             <figcaption>With vLLM, requests no longer go straight from the API layer into generation. The engine, scheduler, and KV cache manager coordinate work before it reaches the GPU.</figcaption>
           </figure>
           <p>
@@ -538,7 +538,7 @@
             We ran the same concurrency sweep as before: same model, same instance, same prompt, same concurrency levels (1, 4, 8, 16, 32, 64), 64 requests per level. The only change was the inference backend.
           </p>
           <figure class="post-figure">
-            <img src="vllm-summary-four-panel.svg" alt="A four-panel summary of the vLLM server showing total latency, inter-token latency, throughput, and GPU utilization with in-flight requests." loading="lazy" />
+            <img src="assets/vllm-summary-four-panel.svg" alt="A four-panel summary of the vLLM server showing total latency, inter-token latency, throughput, and GPU utilization with in-flight requests." loading="lazy" />
             <figcaption>Summary of the vLLM server under the same sweep: latency stays comparatively flat, streaming remains smooth, throughput scales dramatically, and the GPU stays consistently busy as concurrency rises.</figcaption>
           </figure>
           <p>
