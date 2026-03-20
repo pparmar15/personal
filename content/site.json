@@ -4,15 +4,15 @@
     "nav": [
       {
         "label": "About",
-        "href": "index.html"
+        "href": "about/"
       },
       {
         "label": "Resume",
-        "href": "resume.html"
+        "href": "resume/"
       },
       {
         "label": "Blog",
-        "href": "blog.html"
+        "href": "blog/"
       }
     ]
   },
@@ -200,11 +200,11 @@
     "links": [
       {
         "label": "Go Home",
-        "href": "index.html"
+        "href": "about/"
       },
       {
         "label": "Read the Blog",
-        "href": "blog.html"
+        "href": "blog/"
       }
     ]
   },

@@ -23,6 +23,8 @@ def main() -> None:
     data = json.loads(CONTENT_FILE.read_text(encoding="utf-8"))
     posts = load_posts(data["posts"])
     POSTS_DIR.mkdir(exist_ok=True)
+    about_body_root = render_home_body(data["home"], posts, path_prefix="")
+    about_body_nested = render_home_body(data["home"], posts, path_prefix="../")
 
     write_page(
         ROOT / "index.html",
@@ -32,38 +34,30 @@ def main() -> None:
             asset_prefix="",
             page_title=data["home"]["page_title"],
             description=data["home"]["description"],
-            body_html=render_template(
-                "home.html",
-                {
-                    "hero_heading": escape_html(data["home"]["hero_heading"]),
-                    "hero_lead_html": indent_block(
-                        render_intro_paragraphs(data["home"]["hero_lead"]),
-                        12,
-                    ),
-                    "hero_links": indent_block(render_links(data["home"]["links"]), 14),
-                    "focus_heading": escape_html(data["home"]["focus_heading"]),
-                    "focus_body": escape_html(data["home"]["focus_body"]),
-                    "focus_items": indent_block(render_list_items(data["home"]["focus_items"]), 12),
-                    "recent_posts_heading": escape_html(data["home"]["recent_posts_heading"]),
-                    "recent_posts_link_label": escape_html(
-                        data["home"]["recent_posts_link_label"]
-                    ),
-                    "recent_posts": indent_block(
-                        render_post_cards(posts[:3], heading_tag="h3", preview=False),
-                        12,
-                    ),
-                },
-            ),
+            body_html=about_body_root,
             footer_html=render_footer(data["site"]["name"], include_copy=True),
         ),
     )
 
     write_page(
-        ROOT / "blog.html",
+        route_output_path("about"),
+        build_page(
+            site=data["site"],
+            active_nav="About",
+            asset_prefix="../",
+            page_title=data["home"]["page_title"],
+            description=data["home"]["description"],
+            body_html=about_body_nested,
+            footer_html=render_footer(data["site"]["name"], include_copy=True),
+        ),
+    )
+
+    write_page(
+        route_output_path("blog"),
         build_page(
             site=data["site"],
             active_nav="Blog",
-            asset_prefix="",
+            asset_prefix="../",
             page_title=data["blog"]["page_title"],
             description=data["blog"]["description"],
             body_html=render_template(
@@ -77,7 +71,7 @@ def main() -> None:
                         12,
                     ),
                     "post_previews": indent_block(
-                        render_post_cards(posts, heading_tag="h2", preview=True),
+                        render_post_cards(posts, heading_tag="h2", preview=True, path_prefix="../"),
                         12,
                     ),
                 },
@@ -87,11 +81,11 @@ def main() -> None:
     )
 
     write_page(
-        ROOT / "resume.html",
+        route_output_path("resume"),
         build_page(
             site=data["site"],
             active_nav="Resume",
-            asset_prefix="",
+            asset_prefix="../",
             page_title=data["resume"]["page_title"],
             description=data["resume"]["description"],
             body_html=render_template(
@@ -108,7 +102,7 @@ def main() -> None:
                         12,
                     ),
                     "resume_download_href": escape_attr(
-                        data["resume"]["download"]["href"]
+                        f"../{data['resume']['download']['href']}"
                     ),
                     "resume_download_label": escape_html(
                         data["resume"]["download"]["label"]
@@ -162,6 +156,10 @@ def main() -> None:
         ),
     )
 
+    for legacy_path in (ROOT / "blog.html", ROOT / "resume.html"):
+        if legacy_path.exists():
+            legacy_path.unlink()
+
     for post in posts:
         legacy_post_path = POSTS_DIR / f"{post['slug']}.html"
         if legacy_post_path.exists():
@@ -210,7 +208,7 @@ def build_page(
             "page_title": escape_html(page_title),
             "meta_description_tag": render_meta_description(description),
             "asset_prefix": asset_prefix,
-            "home_href": f"{asset_prefix}index.html",
+            "home_href": f"{asset_prefix}about/",
             "site_name": escape_html(site["name"]),
             "nav_links": indent_block(
                 render_nav(site["nav"], active_nav, asset_prefix),
@@ -345,7 +343,38 @@ def render_filter_buttons(tags: list[str]) -> str:
     return "\n".join(buttons)
 
 
-def render_post_cards(posts: list[dict], *, heading_tag: str, preview: bool) -> str:
+def render_home_body(home: dict, posts: list[dict], *, path_prefix: str) -> str:
+    return render_template(
+        "home.html",
+        {
+            "hero_heading": escape_html(home["hero_heading"]),
+            "hero_lead_html": indent_block(
+                render_intro_paragraphs(home["hero_lead"]),
+                12,
+            ),
+            "hero_links": indent_block(render_links(home["links"]), 14),
+            "focus_heading": escape_html(home["focus_heading"]),
+            "focus_body": escape_html(home["focus_body"]),
+            "focus_items": indent_block(render_list_items(home["focus_items"]), 12),
+            "recent_posts_heading": escape_html(home["recent_posts_heading"]),
+            "recent_posts_link_label": escape_html(home["recent_posts_link_label"]),
+            "recent_posts_href": escape_attr(f"{path_prefix}blog/"),
+            "recent_posts": indent_block(
+                render_post_cards(
+                    posts[:3],
+                    heading_tag="h3",
+                    preview=False,
+                    path_prefix=path_prefix,
+                ),
+                12,
+            ),
+        },
+    )
+
+
+def render_post_cards(
+    posts: list[dict], *, heading_tag: str, preview: bool, path_prefix: str = ""
+) -> str:
     cards = []
     for post in posts:
         classes = ["post-item"]
@@ -359,7 +388,7 @@ def render_post_cards(posts: list[dict], *, heading_tag: str, preview: bool) -> 
                 [
                     f'<article class="{" ".join(classes)}"{attrs}>',
                     f"  <{heading_tag}>",
-                    f'    <a href="{escape_attr(post_href(post))}">',
+                    f'    <a href="{escape_attr(path_prefix + post_href(post))}">',
                     f"      {escape_html(post['title'])}",
                     "    </a>",
                     f"  </{heading_tag}>",
@@ -695,6 +724,10 @@ def post_href(post: dict) -> str:
 
 def post_output_path(post: dict) -> Path:
     return POSTS_DIR / post["slug"] / "index.html"
+
+
+def route_output_path(route: str) -> Path:
+    return ROOT / route / "index.html"
 
 
 def make_heading_id(text: str, used_ids: dict[str, int]) -> str:
