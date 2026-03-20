@@ -35,7 +35,7 @@
     },
     {
       "type": "image",
-      "src": "request-flow.excalidraw",
+      "src": "assets/request-flow.excalidraw",
       "alt": "A sketch-style flow showing User Prompt, then LLM Server, then Tokens appear one by one.",
       "caption": "A minimal view of the request path: a prompt enters the server, and tokens are emitted incrementally."
     },
@@ -87,7 +87,7 @@
     },
     {
       "type": "image",
-      "src": "inference-pipeline.svg",
+      "src": "assets/inference-pipeline.svg",
       "alt": "A sketch-style inference pipeline showing User Prompt, Tokenization, Model processes tokens, Next token predicted, Token appended, and Repeat with a loop back.",
       "caption": "A high-level view of inference: the prompt is tokenized, processed by the model, extended with the next token, and the loop repeats until the response ends."
     },
@@ -169,7 +169,7 @@
     },
     {
       "type": "image",
-      "src": "black-box-mental-model.svg",
+      "src": "assets/black-box-mental-model.svg",
       "alt": "A conceptual black-box mental model showing tokenized input on the left, a dark model box in the center, and next-token probabilities on the right.",
       "caption": "A useful serving abstraction: feed tokenized input into the model, treat the transformer internals as a black box, and read out probabilities for the next token."
     },
@@ -325,7 +325,7 @@
     },
     {
       "type": "image",
-      "src": "prefill-decode-kv-cache.excalidraw",
+      "src": "assets/prefill-decode-kv-cache.excalidraw",
       "alt": "A combined diagram showing the two phases of inference: prefill processes the full prompt and creates the KV cache, then decode generates tokens one at a time, reusing and incrementally extending the cache.",
       "caption": "The two phases of inference: prefill processes the entire prompt to build the KV cache, then decode generates tokens one at a time, reusing the cached state and appending new entries with each step."
     },
@@ -396,7 +396,7 @@
     },
     {
       "type": "image",
-      "src": "naive-server-path.svg",
+      "src": "assets/naive-server-path.svg",
       "alt": "A direct four-step naive server path showing Client, FastAPI endpoint, model.generate(), and GPU in sequence.",
       "caption": "The naive serving path is completely direct: a request moves from the client to the API layer, into model.generate(), and onto the GPU with no scheduler or batching layer in between."
     },
@@ -418,7 +418,7 @@
     },
     {
       "type": "image",
-      "src": "naive-summary-four-panel.svg",
+      "src": "assets/naive-summary-four-panel.svg",
       "alt": "A four-panel summary of the naive server showing total latency, inter-token latency, throughput, and GPU utilization with in-flight requests.",
       "caption": "Summary of the naive Hugging Face server under load: latency and inter-token delay rise sharply, throughput flattens, and GPU utilization does not scale cleanly with added in-flight work."
     },
@@ -494,7 +494,7 @@
     },
     {
       "type": "image",
-      "src": "vllm-architecture.svg",
+      "src": "assets/vllm-architecture.svg",
       "alt": "A layered vLLM architecture showing Client, FastAPI Server, AsyncLLMEngine, Scheduler and KV Cache management, and GPU execution.",
       "caption": "With vLLM, requests no longer go straight from the API layer into generation. The engine, scheduler, and KV cache manager coordinate work before it reaches the GPU."
     },
@@ -615,7 +615,7 @@
     },
     {
       "type": "image",
-      "src": "vllm-summary-four-panel.svg",
+      "src": "assets/vllm-summary-four-panel.svg",
       "alt": "A four-panel summary of the vLLM server showing total latency, inter-token latency, throughput, and GPU utilization with in-flight requests.",
       "caption": "Summary of the vLLM server under the same sweep: latency stays comparatively flat, streaming remains smooth, throughput scales dramatically, and the GPU stays consistently busy as concurrency rises."
     },
