@@ -210,7 +210,7 @@
   },
   "posts": [
     {
-      "source": "posts/from-prompt-to-token/post.json"
+      "source": "blog/from-prompt-to-token/post.json"
     }
   ]
 }
