@@ -531,7 +531,7 @@ def render_post_content(blocks: list[dict], heading_items: list[dict]) -> str:
         block_type = block["type"]
         if block_type == "paragraph":
             lines.append("<p>")
-            lines.append(f"  {escape_html(block['text'])}")
+            lines.append(f"  {render_post_paragraph(block)}")
             lines.append("</p>")
         elif block_type == "heading":
             heading = next(heading_iter)
@@ -559,6 +559,24 @@ def render_post_content(blocks: list[dict], heading_items: list[dict]) -> str:
         else:
             raise ValueError(f"Unsupported post block type: {block_type}")
     return "\n".join(lines)
+
+
+def render_post_paragraph(block: dict) -> str:
+    if "parts" not in block:
+        return escape_html(block["text"])
+
+    parts = []
+    for item in block["parts"]:
+        label = escape_html(item["text"])
+        href = item.get("href")
+        if href:
+            parts.append(
+                f'<a href="{escape_attr(href)}"'
+                f'{render_link_attrs(item, default_class="underlined-link")}>{label}</a>'
+            )
+        else:
+            parts.append(label)
+    return "".join(parts)
 
 
 def build_post_headings(blocks: list[dict]) -> list[dict]:

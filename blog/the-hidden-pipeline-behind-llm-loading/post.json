@@ -1,0 +1,606 @@
+{
+  "slug": "the-hidden-pipeline-behind-llm-loading",
+  "title": "The Hidden Pipeline Behind LLM Loading",
+  "page_title": "The Hidden Pipeline Behind LLM Loading | Parth Parmar",
+  "description": "A deep dive into what actually happens between passing a model ID and the model being ready to serve its first request, from download to GPU placement.",
+  "date": "March 22, 2026",
+  "excerpt": "That one line of code that loads a model can take minutes. Here is everything that happens behind it: resolving the model ID, downloading sharded weights, building the architecture, and placing tensors on the GPU.",
+  "tags": [
+    "Platform",
+    "Serving"
+  ],
+  "lead": "",
+  "content": [
+    {
+      "type": "heading",
+      "level": "part",
+      "text": "Introduction"
+    },
+    {
+      "type": "paragraph",
+      "text": "If you have ever loaded a large language model, you have probably written something like this:"
+    },
+    {
+      "type": "code",
+      "text": "from transformers import AutoModelForCausalLM\n\nmodel = AutoModelForCausalLM.from_pretrained(\"Qwen/Qwen2.5-14B-Instruct\")"
+    },
+    {
+      "type": "paragraph",
+      "text": "You run it, and then you wait. Sometimes for thirty seconds. Sometimes for several minutes. Eventually the function returns, and you have a model object sitting in memory, ready to generate text."
+    },
+    {
+      "type": "paragraph",
+      "text": "But what actually happened during that wait?"
+    },
+    {
+      "type": "paragraph",
+      "text": "From the outside, from_pretrained looks like a single operation. You pass in a model name, and you get back a model. It feels like opening a file. But behind that one line, the system is doing an enormous amount of work: resolving a name into a remote repository, downloading tens of gigabytes of data, constructing an empty neural network, filling it with billions of parameters, and physically moving those parameters onto a GPU."
+    },
+    {
+      "type": "paragraph",
+      "text": "Each of those steps has its own constraints, its own bottlenecks, and its own implications for how fast your model starts up and how much memory it ends up consuming."
+    },
+    {
+      "type": "image",
+      "src": "assets/loading-pipeline-overview.excalidraw",
+      "alt": "A sketch-style pipeline showing the stages: Model ID string, then Resolve repo, then Download weights, then Build empty model, then Load parameters, then Place on GPU, then Ready.",
+      "caption": "The full journey from a model ID string to a live model on the GPU. Each stage has its own cost."
+    },
+    {
+      "type": "paragraph",
+      "text": "Once the model is loaded, the next challenge is actually serving it: handling prompts, generating tokens, and managing concurrent users on the GPU. That is the subject of the next post. But before any of that can happen, the model has to get loaded in the first place, and that process is far more involved than it looks."
+    },
+    {
+      "type": "paragraph",
+      "text": "We will trace the entire loading pipeline, stage by stage, and by the end you should have a clear mental picture of everything that happens before the model is ready to serve its first token."
+    },
+    {
+      "type": "heading",
+      "level": "part",
+      "text": "What Is a Model ID, Really?"
+    },
+    {
+      "type": "paragraph",
+      "text": "Let's start with the string itself."
+    },
+    {
+      "type": "visual",
+      "variant": "mono",
+      "text": "Qwen/Qwen2.5-14B-Instruct"
+    },
+    {
+      "type": "paragraph",
+      "text": "This looks like a path, and in a sense it is. The first part, Qwen, is the organization. The second part, Qwen2.5-14B-Instruct, is the model name. Together they form an address that points to a repository on the Hugging Face Hub."
+    },
+    {
+      "type": "paragraph",
+      "text": "When you pass this string to from_pretrained, the very first thing that happens is a network call. The library contacts the Hugging Face Hub API, resolves the model ID, and retrieves the list of files in that repository."
+    },
+    {
+      "type": "paragraph",
+      "text": "So what is actually inside this repository? If you browse it on the Hub, you will find something like this:"
+    },
+    {
+      "type": "visual",
+      "variant": "sequence",
+      "title": "Contents of a typical model repository",
+      "rows": [
+        "config.json",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "model-00001-of-00008.safetensors",
+        "model-00002-of-00008.safetensors",
+        "...",
+        "model-00008-of-00008.safetensors",
+        "model.safetensors.index.json"
+      ]
+    },
+    {
+      "type": "paragraph",
+      "text": "There are three categories of files here, and each one plays a different role in the loading process."
+    },
+    {
+      "type": "paragraph",
+      "text": "The config.json is the blueprint. It describes everything about the model's architecture: how many layers it has, the hidden dimension size, the number of attention heads, the vocabulary size. It contains no weights at all."
+    },
+    {
+      "type": "paragraph",
+      "text": "The tokenizer files define how text is converted to and from the numerical token IDs that the model understands. Without these, you could load the model but would have no way to feed it text or read its output."
+    },
+    {
+      "type": "paragraph",
+      "text": "The safetensors files are the actual weight files. These contain the billions of numerical parameters that make the model what it is. For Qwen-14B, these files total roughly 28 gigabytes."
+    },
+    {
+      "type": "paragraph",
+      "text": "Think of it this way. The model ID is an address. The repository is the house at that address. The config.json is the floor plan. It tells you exactly how the house is laid out without containing any furniture. The weight files are the furniture itself. And the tokenizer files are the instruction manual for how people communicate with whatever lives inside the house."
+    },
+    {
+      "type": "paragraph",
+      "text": "With the repository resolved, the loading process knows what it needs to download. But before anything moves into memory, the files need to exist locally."
+    },
+    {
+      "type": "heading",
+      "level": "part",
+      "text": "Downloading the Weights"
+    },
+    {
+      "type": "paragraph",
+      "text": "The first time you call from_pretrained for a given model, the library needs to download the files from the Hub. If you have loaded the same model before, it checks a local cache first and skips the download entirely. But on a fresh machine, which is exactly the situation you face when spinning up a new GPU instance, everything must come over the network."
+    },
+    {
+      "type": "paragraph",
+      "text": "For Qwen-14B in FP16, that means downloading approximately 28 gigabytes of weight data, plus a few small config and tokenizer files."
+    },
+    {
+      "type": "paragraph",
+      "text": "You might wonder why the weights are split across eight files instead of stored as a single file. The answer is practical. A single 28 GB file is fragile to download, hard to resume if the connection drops, and slow to process. By sharding the weights across multiple files, each one can be downloaded and verified independently. Some systems can even download shards in parallel."
+    },
+    {
+      "type": "paragraph",
+      "text": "There is also an index file that acts as a map."
+    },
+    {
+      "type": "visual",
+      "variant": "mono",
+      "text": "model.safetensors.index.json"
+    },
+    {
+      "type": "paragraph",
+      "text": "This file tells the loader which parameters live in which shard. When the framework needs to load the attention weights from layer 12, it can look up the index and read directly from the right file instead of scanning through all eight."
+    },
+    {
+      "type": "heading",
+      "text": "Why Safetensors?"
+    },
+    {
+      "type": "paragraph",
+      "text": "Older models often used Python's pickle format to store weights. This worked, but it had a serious problem: loading a pickle file means executing arbitrary Python code. A malicious model file could run anything on your system."
+    },
+    {
+      "type": "paragraph",
+      "text": "Safetensors was created to fix this. It is a simple, flat binary format. Each file is essentially a header describing the tensor names, shapes, and data types, followed by the raw numerical data laid out contiguously in memory."
+    },
+    {
+      "type": "paragraph",
+      "text": "This simplicity has a performance benefit too. Because the data is laid out contiguously, the file can be memory-mapped. Memory mapping means the operating system can make the file's contents accessible as if they were already in RAM, without actually reading the entire file upfront. The framework can then read individual tensors directly from disk on demand, which matters a lot when you are working with files that are several gigabytes each."
+    },
+    {
+      "type": "heading",
+      "text": "The Local Cache"
+    },
+    {
+      "type": "paragraph",
+      "text": "After the download completes, all the files land in a local cache directory, typically under ~/.cache/huggingface/hub/. The directory structure looks something like this:"
+    },
+    {
+      "type": "code",
+      "text": "~/.cache/huggingface/hub/\n  models--Qwen--Qwen2.5-14B-Instruct/\n    snapshots/\n      abc123def456/\n        config.json\n        tokenizer.json\n        model-00001-of-00008.safetensors\n        model-00002-of-00008.safetensors\n        ...\n        model.safetensors.index.json"
+    },
+    {
+      "type": "paragraph",
+      "text": "The snapshot hash ensures that if the model is updated on the Hub, you can have multiple versions cached locally without conflicts."
+    },
+    {
+      "type": "paragraph",
+      "text": "At this point, we have all the raw materials sitting on local disk. The config that describes the architecture, the tokenizer files, and the weight shards. The next step is to actually build the model."
+    },
+    {
+      "type": "heading",
+      "level": "part",
+      "text": "Building the Empty Model"
+    },
+    {
+      "type": "paragraph",
+      "text": "Before any weights are loaded, the framework needs to construct the model's architecture in memory. This is where config.json matters most."
+    },
+    {
+      "type": "paragraph",
+      "text": "The framework reads the config and uses it to instantiate every component of the neural network. For a model like Qwen-14B, this means creating:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "An embedding layer that maps token IDs to vectors",
+        "48 transformer layers, each containing self-attention and feed-forward blocks",
+        "Attention heads within each layer (40 for Qwen-14B)",
+        "A final output projection that maps back to vocabulary probabilities"
+      ]
+    },
+    {
+      "type": "paragraph",
+      "text": "In code, this step is roughly equivalent to:"
+    },
+    {
+      "type": "code",
+      "text": "from transformers import AutoConfig, AutoModelForCausalLM\n\nconfig = AutoConfig.from_pretrained(\"Qwen/Qwen2.5-14B-Instruct\")\n\n# This creates the full architecture with random/uninitialized weights\nmodel = AutoModelForCausalLM.from_config(config)"
+    },
+    {
+      "type": "paragraph",
+      "text": "After this call, you have a fully wired neural network. Every layer is connected. Every matrix has the right shape. The computational graph is complete."
+    },
+    {
+      "type": "paragraph",
+      "text": "Every parameter, all 14 billion of them, is filled with random noise or zeros. The model has the right structure but none of the learned knowledge. If you ran inference on it right now, you would get gibberish."
+    },
+    {
+      "type": "image",
+      "src": "assets/empty-model-skeleton.excalidraw",
+      "alt": "A sketch showing a vertical stack of transformer layers, each with attention and feed-forward blocks outlined but empty, representing the model architecture before weights are loaded.",
+      "caption": "The model architecture after construction: every layer and connection is in place, but all parameters contain random values. Structure without knowledge."
+    },
+    {
+      "type": "paragraph",
+      "text": "Think of it like a newly constructed building. All the rooms are the right size, the hallways connect to the right places, the electrical wiring follows the blueprint. But there is no furniture, no equipment, nothing that makes it functional. The architecture is correct, but the building is empty."
+    },
+    {
+      "type": "paragraph",
+      "text": "The next step is to fill it with the actual learned parameters."
+    },
+    {
+      "type": "heading",
+      "level": "part",
+      "text": "Loading Weights into the Model"
+    },
+    {
+      "type": "paragraph",
+      "text": "Now the framework fills the empty model with its trained parameters."
+    },
+    {
+      "type": "paragraph",
+      "text": "The framework opens the safetensors files and maps each stored tensor to a parameter in the model by name. Every parameter in the model has a hierarchical name like:"
+    },
+    {
+      "type": "visual",
+      "variant": "sequence",
+      "title": "Example parameter names",
+      "rows": [
+        "model.layers.0.self_attn.q_proj.weight",
+        "model.layers.0.self_attn.k_proj.weight",
+        "model.layers.0.mlp.gate_proj.weight",
+        "model.layers.47.self_attn.v_proj.weight",
+        "model.embed_tokens.weight",
+        "lm_head.weight"
+      ]
+    },
+    {
+      "type": "paragraph",
+      "text": "The safetensors files store tensors with the same names. The index file tells the loader which shard contains which tensor. So loading becomes a matter of looking up the right file, reading the tensor data, and placing it into the corresponding parameter slot in the model."
+    },
+    {
+      "type": "paragraph",
+      "text": "Because safetensors files can be memory-mapped, the framework does not necessarily need to read the entire file into RAM at once. It can map the file and then read individual tensors directly, which is significantly more memory-efficient than loading everything and then sorting it out."
+    },
+    {
+      "type": "heading",
+      "text": "dtype: The Same Model at Different Sizes"
+    },
+    {
+      "type": "paragraph",
+      "text": "One detail that matters a lot in practice is the data type used to store each parameter."
+    },
+    {
+      "type": "paragraph",
+      "text": "A neural network parameter is just a number. But how many bytes you use to represent that number changes everything about memory consumption."
+    },
+    {
+      "type": "visual",
+      "variant": "sequence",
+      "title": "Memory impact of dtype for 14B parameters",
+      "rows": [
+        "FP32 (4 bytes per param) → ~56 GB",
+        "FP16 (2 bytes per param) → ~28 GB",
+        "BF16 (2 bytes per param) → ~28 GB",
+        "INT8 (1 byte per param)  → ~14 GB",
+        "INT4 (0.5 bytes per param) → ~7 GB"
+      ]
+    },
+    {
+      "type": "paragraph",
+      "text": "The same 14 billion parameters can consume anywhere from 7 GB to 56 GB depending on the precision. This is not a minor implementation detail. It determines whether the model fits on your GPU at all, and how much VRAM remains available for serving requests after the weights are loaded."
+    },
+    {
+      "type": "paragraph",
+      "text": "When you pass torch_dtype=torch.float16 to from_pretrained, you are telling the framework to load and store every parameter as a 16-bit floating point number. For Qwen-14B, that means roughly 28 GB of weight data."
+    },
+    {
+      "type": "code",
+      "text": "model = AutoModelForCausalLM.from_pretrained(\n    \"Qwen/Qwen2.5-14B-Instruct\",\n    torch_dtype=torch.float16,  # 2 bytes per parameter\n    device_map=\"auto\"\n)"
+    },
+    {
+      "type": "paragraph",
+      "text": "Choosing the wrong dtype is one of the most common ways people run out of GPU memory before inference even starts. The model loads fine in FP16 on a 48 GB GPU, but in FP32 it would consume 56 GB, more than the entire VRAM."
+    },
+    {
+      "type": "paragraph",
+      "text": "At this point, the model object in CPU memory has the right architecture and the right parameters. But it still is not on the GPU."
+    },
+    {
+      "type": "heading",
+      "level": "part",
+      "text": "Placing the Model on the GPU"
+    },
+    {
+      "type": "paragraph",
+      "text": "This is the final physical step before the model is ready. The parameters need to move from where they currently live, typically CPU RAM or memory-mapped files on disk, into GPU VRAM."
+    },
+    {
+      "type": "paragraph",
+      "text": "When you write device_map=\"auto\", you are asking the Hugging Face Accelerate library to figure this out for you."
+    },
+    {
+      "type": "heading",
+      "text": "What device_map=\"auto\" Actually Does"
+    },
+    {
+      "type": "paragraph",
+      "text": "The library does not just blindly push everything to the GPU. Instead, it runs a placement algorithm:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "It queries the available devices: how many GPUs, how much VRAM each has",
+        "It estimates the memory footprint of each model layer based on parameter sizes and the chosen dtype",
+        "It assigns layers to devices, filling GPU memory first, then falling back to CPU RAM, and finally to disk if needed"
+      ]
+    },
+    {
+      "type": "paragraph",
+      "text": "For our setup (Qwen-14B in FP16 on an L40S with 48 GB of VRAM), the math is straightforward. The model weights need roughly 28 GB. The GPU has 48 GB. Everything fits on a single device, so the entire model goes to GPU 0."
+    },
+    {
+      "type": "paragraph",
+      "text": "But if you tried to load a 70B model on the same GPU, the library would split the layers: some on the GPU, the rest on CPU RAM. Inference would still work, but every forward pass would involve moving data back and forth across the PCIe bus, which is dramatically slower."
+    },
+    {
+      "type": "heading",
+      "text": "The Transfer"
+    },
+    {
+      "type": "paragraph",
+      "text": "Once placement is decided, the actual data transfer begins. Tensors move from CPU memory to GPU VRAM over the PCIe bus."
+    },
+    {
+      "type": "paragraph",
+      "text": "This is often one of the biggest bottlenecks in the loading process. PCIe Gen4 x16, which is common on GPU instances, has a theoretical peak bandwidth of about 32 GB/s. In practice, you typically see 20-25 GB/s of effective throughput."
+    },
+    {
+      "type": "paragraph",
+      "text": "For 28 GB of weights, that means the transfer alone takes roughly 1-2 seconds under ideal conditions. In reality, the overhead of allocating GPU memory, organizing tensors, and managing the transfer pipeline pushes this higher."
+    },
+    {
+      "type": "image",
+      "src": "assets/cpu-to-gpu-transfer.excalidraw",
+      "alt": "A sketch showing weight tensors flowing from CPU RAM through the PCIe bus into GPU VRAM, with the bottleneck highlighted at the PCIe connection.",
+      "caption": "The final step: weight tensors move from CPU memory to GPU VRAM over PCIe. The bus bandwidth is often the bottleneck in the loading pipeline."
+    },
+    {
+      "type": "paragraph",
+      "text": "Once the transfer completes, the model's parameters are physically sitting in VRAM as a collection of tensors. The GPU cores can now access them directly for the matrix multiplications that make up a forward pass."
+    },
+    {
+      "type": "paragraph",
+      "text": "At this point, from_pretrained returns. You have a model object with all its weights on the GPU. But is the model actually ready to serve requests?"
+    },
+    {
+      "type": "paragraph",
+      "text": "Not quite. There is one more stage that separates having weights on the GPU from being truly ready."
+    },
+    {
+      "type": "heading",
+      "level": "part",
+      "text": "Warming Up the Engine"
+    },
+    {
+      "type": "paragraph",
+      "text": "The weights are on the GPU. The architecture is wired up. Everything looks ready. But if you sent a request right now, that first request would be noticeably slower than every request after it."
+    },
+    {
+      "type": "paragraph",
+      "text": "To understand why, we need to talk about what actually happens in GPU memory when the model runs, not just when it sits idle."
+    },
+    {
+      "type": "heading",
+      "text": "Activation Memory: The Counter Space"
+    },
+    {
+      "type": "paragraph",
+      "text": "So far we have only talked about one kind of GPU memory usage: the model weights. Those 28 GB of parameters sit in VRAM permanently, like ingredients stored in a pantry. They are there whether the model is working or not."
+    },
+    {
+      "type": "paragraph",
+      "text": "But when the model actually runs a forward pass, it needs additional temporary memory. As a batch of tokens moves through each transformer layer, the GPU computes intermediate results: attention scores, hidden state projections, softmax outputs, feed-forward activations. Each of these intermediate results is a tensor that must live in GPU memory while it is being used."
+    },
+    {
+      "type": "paragraph",
+      "text": "This temporary memory is called activation memory."
+    },
+    {
+      "type": "paragraph",
+      "text": "Think of it like a kitchen. The weights are the ingredients permanently stored in the pantry. They take up shelf space all the time. Activation memory is the cutting boards, mixing bowls, and half-prepped food that spread across your counter while you are actively cooking. Once the dish is done, you clear the counter. But while you are cooking, you need that counter space, and you cannot cook without it."
+    },
+    {
+      "type": "image",
+      "src": "assets/activation-memory-kitchen.excalidraw",
+      "alt": "A sketch showing GPU VRAM split into three regions: model weights (the pantry), activation memory (the counter space during cooking), and the remaining space available for KV caches.",
+      "caption": "GPU memory during inference: weights are permanent residents, activation memory is temporary workspace consumed during each forward pass, and whatever remains is available for KV caches."
+    },
+    {
+      "type": "paragraph",
+      "text": "The size of this activation memory is not fixed. It depends on the sequence length being processed, the batch size, the hidden dimension, and the number of attention heads. A longer prompt or a larger batch means bigger intermediate tensors and more temporary memory consumed."
+    },
+    {
+      "type": "paragraph",
+      "text": "This is easy to overlook when estimating memory. You cannot calculate the real budget just by looking at weight size. The GPU also needs room for these temporary activations during every forward pass."
+    },
+    {
+      "type": "heading",
+      "text": "Why the First Request Is Slow"
+    },
+    {
+      "type": "paragraph",
+      "text": "Even with the weights loaded and the architecture set, the very first forward pass has extra overhead that subsequent passes do not."
+    },
+    {
+      "type": "paragraph",
+      "text": "CUDA kernels, the low-level GPU programs that execute operations like matrix multiplications, are not fully compiled until they are first used. On the first forward pass, the CUDA runtime compiles these kernels for the specific tensor shapes and data types the model uses. Libraries like cuBLAS also run algorithm selection on the first call, testing different strategies to find the fastest approach for each operation on the specific hardware."
+    },
+    {
+      "type": "paragraph",
+      "text": "After that first pass, the compiled kernels are cached and the selected algorithms are remembered. Every subsequent request benefits from this warmup without paying the cost again."
+    },
+    {
+      "type": "heading",
+      "text": "How Serving Engines Handle This"
+    },
+    {
+      "type": "paragraph",
+      "text": "A naive server built directly on Hugging Face Transformers does not perform any warmup. It loads the model, starts listening for requests, and the first unlucky user pays the cold-inference penalty."
+    },
+    {
+      "type": "paragraph",
+      "text": "Production serving engines take a different approach. During startup, before accepting any traffic, they run a profiling forward pass. The engine feeds a dummy input through the model to do two things at once:"
+    },
+    {
+      "type": "list",
+      "items": [
+        "Warm up the CUDA kernels so they are compiled and cached before real requests arrive",
+        "Measure the peak activation memory the model actually consumes during a forward pass on this specific hardware"
+      ]
+    },
+    {
+      "type": "paragraph",
+      "text": "Rather than estimating activation memory from theory, the engine measures it empirically. It runs the model, observes how much VRAM the activations actually consumed, and then calculates exactly how much memory remains for serving concurrent requests."
+    },
+    {
+      "type": "paragraph",
+      "text": "This is why production inference servers take noticeably longer to start up than a raw from_pretrained call. They are not just loading weights. They are doing real GPU work to profile the model and establish its memory budget. By the time the engine reports ready, the CUDA kernels are compiled and the remaining VRAM is accounted for."
+    },
+    {
+      "type": "heading",
+      "level": "part",
+      "text": "The Model Is \"Ready\": What Does That Mean?"
+    },
+    {
+      "type": "paragraph",
+      "text": "With weights loaded, placed on the GPU, and the engine warmed up, the model is finally ready to serve."
+    },
+    {
+      "type": "paragraph",
+      "text": "But what does \"ready\" actually mean in concrete terms?"
+    },
+    {
+      "type": "paragraph",
+      "text": "It means the GPU is holding the model's weights in VRAM, the CUDA kernels are compiled and cached, and the serving engine knows exactly how much memory is available for concurrent requests. If you handed it a batch of token IDs right now, the GPU could execute a forward pass immediately: multiplying inputs through embedding layers, running through all 48 transformer layers, and producing a probability distribution over the next token, with no first-request penalty."
+    },
+    {
+      "type": "paragraph",
+      "text": "The model is like a fully furnished, fully equipped factory floor with all the machinery in place, power connected, the lights on, and every machine already tested with a trial run. The conveyor belt is ready to start the moment the first order comes in."
+    },
+    {
+      "type": "heading",
+      "text": "The Real Memory Budget"
+    },
+    {
+      "type": "paragraph",
+      "text": "This is also where a critical constraint becomes fully visible. Our L40S has 48 GB of VRAM. But the available memory for serving is not simply total VRAM minus weight size. It is total VRAM minus weights, minus peak activation memory, minus framework overhead."
+    },
+    {
+      "type": "visual",
+      "variant": "sequence",
+      "title": "VRAM budget after loading and warmup (L40S, FP16)",
+      "rows": [
+        "Total VRAM:              48 GB",
+        "Model weights:          ~28 GB",
+        "Peak activation memory:  ~1-2 GB",
+        "PyTorch/CUDA overhead:   ~1 GB",
+        "Available for KV cache: ~17-18 GB"
+      ]
+    },
+    {
+      "type": "paragraph",
+      "text": "That remaining memory is the budget for KV caches during inference. Every active request will consume part of this budget as it generates tokens and its cache grows. Once this memory is full, the server either starts rejecting requests or slows down dramatically."
+    },
+    {
+      "type": "paragraph",
+      "text": "This memory budget is what determines how efficiently the model can be served. How many users can be handled simultaneously, how concurrent requests are scheduled, how KV cache memory is managed and recycled: all of it plays out within whatever VRAM is left over after the model weights and activation overhead are accounted for. We will explore these serving challenges in detail in the next post."
+    },
+    {
+      "type": "paragraph",
+      "text": "The loading pipeline does not just determine startup time. It determines how the entire inference system performs under load."
+    },
+    {
+      "type": "heading",
+      "level": "part",
+      "text": "Putting It All Together"
+    },
+    {
+      "type": "paragraph",
+      "text": "Let's step back and see the full picture. Starting from a model ID string, here is every major stage the system moves through before the model is ready to serve a single request:"
+    },
+    {
+      "type": "image",
+      "src": "assets/full-loading-timeline.excalidraw",
+      "alt": "A horizontal timeline showing all stages of model loading: Resolve model ID, Check local cache, Download weight shards, Read config.json, Build empty model architecture, Load weight tensors from safetensors, Transfer to GPU VRAM, Warmup and profiling, and Ready to serve.",
+      "caption": "The complete loading timeline, from model ID to first request. Each stage has different bottlenecks: network for download, CPU for model construction, PCIe for GPU transfer, and GPU for warmup."
+    },
+    {
+      "type": "visual",
+      "variant": "sequence",
+      "title": "Loading pipeline stages",
+      "rows": [
+        "1. Resolve model ID         → Hub API call",
+        "2. Check local cache         → skip download if present",
+        "3. Download weight shards    → ~28 GB over network",
+        "4. Read config.json          → parse architecture blueprint",
+        "5. Construct empty model     → allocate all layers with random weights",
+        "6. Load tensors              → memory-mapped read from safetensors",
+        "7. Transfer weights to GPU   → push ~28 GB over PCIe into VRAM",
+        "8. Warmup and profiling      → compile CUDA kernels, measure activation memory",
+        "9. Ready                     → model can serve requests with no cold-start penalty"
+      ]
+    },
+    {
+      "type": "paragraph",
+      "text": "On a cold start, a fresh instance with no cached files, the dominant cost is the network download. Pulling 28 GB of weights can take anywhere from 30 seconds to several minutes depending on bandwidth. On a warm start where the files are already cached, the download is skipped entirely, and loading is dominated by the time to construct the model, read weights from disk, transfer them to the GPU, and run the warmup profiling pass."
+    },
+    {
+      "type": "paragraph",
+      "text": "Understanding this pipeline changes how you think about deployment decisions. If cold start time matters, you might pre-cache model weights on the instance's local disk. If you are frequently switching between models, the cache directory becomes critical infrastructure. If you are choosing between FP16 and FP32, you are not just choosing precision. You are choosing how much VRAM remains for actual serving after weights and activation overhead are accounted for."
+    },
+    {
+      "type": "paragraph",
+      "text": "Every choice in the loading pipeline affects inference performance. The dtype you pick determines the memory budget. The memory budget constrains how many requests can run concurrently. Concurrency determines whether your users experience fast, streaming responses or long waits."
+    },
+    {
+      "type": "heading",
+      "level": "part",
+      "text": "References"
+    },
+    {
+      "type": "link_list",
+      "items": [
+        {
+          "label": "Hugging Face Hub Documentation",
+          "href": "https://huggingface.co/docs/hub/index",
+          "new_tab": true
+        },
+        {
+          "label": "Safetensors Format",
+          "href": "https://huggingface.co/docs/safetensors/index",
+          "new_tab": true
+        },
+        {
+          "label": "Accelerate: Big Model Inference",
+          "href": "https://huggingface.co/docs/accelerate/usage_guides/big_modeling",
+          "new_tab": true
+        },
+        {
+          "label": "Qwen2.5-14B-Instruct",
+          "href": "https://huggingface.co/Qwen/Qwen2.5-14B-Instruct",
+          "new_tab": true
+        }
+      ]
+    }
+  ]
+}

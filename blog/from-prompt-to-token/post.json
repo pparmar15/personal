@@ -18,7 +18,18 @@
     },
     {
       "type": "paragraph",
-      "text": "Over the past few years, large language models have become a new kind of infrastructure. Most developers interact with them through APIs that look something like this:"
+      "parts": [
+        {
+          "text": "In the "
+        },
+        {
+          "text": "previous post",
+          "href": "../the-hidden-pipeline-behind-llm-loading/"
+        },
+        {
+          "text": ", we traced the entire pipeline that takes a model from an ID string to weights sitting on a GPU, ready to serve. Now we pick up right where that left off: the first request arrives. What actually happens inside the server that produces those responses?"
+        }
+      ]
     },
     {
       "type": "visual",
@@ -53,7 +64,7 @@
     },
     {
       "type": "paragraph",
-      "text": "Suddenly the problem becomes more interesting. The server needs to:"
+      "text": "The server needs to:"
     },
     {
       "type": "list",
@@ -66,11 +77,11 @@
     },
     {
       "type": "paragraph",
-      "text": "What initially looks like a simple request-response interaction turns into a surprisingly complex system. To explore this, I decided to host a model myself and trace the full lifecycle of a request, from the moment a prompt reaches the server to the moment the generated tokens are streamed back to the user."
+      "text": "To explore this, I decided to host a model myself and trace the full lifecycle of a request, from the moment a prompt reaches the server to the moment the generated tokens are streamed back to the user."
     },
     {
       "type": "paragraph",
-      "text": "For this investigation I chose Qwen-14B, a model that sits in a useful middle ground. It is large enough that efficiency matters, but still manageable to run on a single GPU with the right setup."
+      "text": "For this investigation I chose Qwen-14B. It is large enough that efficiency matters, but still fits on a single GPU with the right setup."
     },
     {
       "type": "heading",
@@ -293,7 +304,7 @@
     },
     {
       "type": "paragraph",
-      "text": "You do not need to understand the full mathematics behind these vectors to understand the system behavior. The important idea is simpler:"
+      "text": "You do not need to understand the full mathematics behind these vectors to understand the system behavior."
     },
     {
       "type": "paragraph",
@@ -351,7 +362,7 @@
     },
     {
       "type": "paragraph",
-      "text": "These constraints are what make LLM inference systems fundamentally different from traditional backend workloads."
+      "text": "These constraints are what make LLM inference different from typical backend workloads."
     },
     {
       "type": "heading",
@@ -455,7 +466,7 @@
       "items": [
         "GPU utilization that fluctuates instead of scaling with load, because requests are processed largely one at a time",
         "Latency that grows roughly in proportion to concurrency, since each additional in-flight request pushes every other request further back in the queue",
-        "Throughput that flattens immediately — more concurrent requests do not produce more tokens per second",
+        "Throughput that flattens immediately: more concurrent requests do not produce more tokens per second",
         "GPU memory pressure that increases with each concurrent request, since every active request carries its own KV cache and the server has no mechanism to manage that memory efficiently"
       ]
     },
@@ -486,7 +497,7 @@
     },
     {
       "type": "paragraph",
-      "text": "The change is surgical. The FastAPI API layer stays the same. The only difference is what happens after a request arrives."
+      "text": "The change is small. The FastAPI API layer stays the same. The only difference is what happens after a request arrives."
     },
     {
       "type": "paragraph",
@@ -512,7 +523,7 @@
     },
     {
       "type": "paragraph",
-      "text": "To understand why these matter, we need to look at what vLLM sees that the naive server was blind to."
+      "text": "To understand why these matter, we need to look at what the naive server was missing."
     },
     {
       "type": "heading",
@@ -532,7 +543,7 @@
     },
     {
       "type": "paragraph",
-      "text": "This is the key shift from the naive server. Requests no longer operate independently. They become units of work that the scheduler coordinates across the whole system."
+      "text": "Requests no longer operate independently. They become units of work that the scheduler coordinates across the whole system."
     },
     {
       "type": "paragraph",
@@ -621,7 +632,7 @@
     },
     {
       "type": "paragraph",
-      "text": "The contrast with the naive server is immediate."
+      "text": "The difference from the naive server is clear."
     },
     {
       "type": "paragraph",
@@ -646,15 +657,11 @@
     },
     {
       "type": "paragraph",
-      "text": "Serving a large language model efficiently is primarily a systems problem."
-    },
-    {
-      "type": "paragraph",
       "text": "The model did not change between our two servers. The hardware did not change. But the naive server took nearly five minutes to complete a request at concurrency 64, while vLLM finished the same request in about 3 seconds, and generated tokens 45 times faster overall. The difference was entirely in how work was scheduled and how memory was managed."
     },
     {
       "type": "paragraph",
-      "text": "The techniques behind that improvement (continuous batching, paged attention, request-level scheduling) are not new ideas in systems engineering. They are adaptations of scheduling and memory management patterns that have existed in operating systems and databases for decades, applied to the specific constraints of autoregressive generation on GPUs."
+      "text": "Continuous batching, paged attention, and request-level scheduling are borrowed from patterns that have existed in operating systems and databases for decades, applied here to the specific constraints of autoregressive generation on GPUs."
     },
     {
       "type": "paragraph",
