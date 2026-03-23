@@ -21,9 +21,9 @@
     "description": "Parth Parmar is a senior software engineer focused on ML infrastructure, platform engineering, and reliable production systems.",
     "hero_heading": "Hi, I'm Parth Parmar.",
     "hero_lead": [
-      "I\u2019m a software engineer focused on building infrastructure for large-scale AI systems. My work sits at the intersection of distributed systems and machine learning infrastructure.",
-      "I\u2019m fascinated by the engineering challenges behind modern AI systems \u2014 how models move from research prototypes to reliable production systems that millions of users interact with every day. Much of my work focuses on the infrastructure that makes this possible: evaluation systems, data generation pipelines, and scalable platforms for deploying AI capabilities.",
-      "I enjoy working on problems where machine learning meets systems engineering. Many of the challenges in AI today are not purely about better models, but about building the infrastructure around them \u2014 systems that are scalable, observable, and reliable enough to support real-world applications. This website is a place where I document what I\u2019m learning."
+      "I\u2019m a software engineer focused on building infrastructure for large-scale AI systems. My work involves both distributed systems and machine learning infrastructure.",
+      "I\u2019m interested in the engineering challenges behind modern AI systems, how models move from research prototypes to reliable production systems that people rely on every day. I work on evaluation systems, data generation pipelines, and platforms for deploying AI.",
+      "I like problems that involve both machine learning and systems engineering. Many of the hard parts of AI today are not about better models, but about building systems that hold up in production. I write here about what I\u2019m learning."
     ],
     "links": [],
     "focus_heading": "Currently Exploring..",
@@ -211,6 +211,9 @@
   "posts": [
     {
       "source": "blog/from-prompt-to-token/post.json"
+    },
+    {
+      "source": "blog/the-hidden-pipeline-behind-llm-loading/post.json"
     }
   ]
 }

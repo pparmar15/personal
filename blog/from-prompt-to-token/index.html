@@ -42,7 +42,7 @@
           <h1>Understanding LLM Inference by Building a Server From Scratch</h1>
           <h2 class="part-heading" id="introduction">Introduction</h2>
           <p>
-            Over the past few years, large language models have become a new kind of infrastructure. Most developers interact with them through APIs that look something like this:
+            In the <a href="../the-hidden-pipeline-behind-llm-loading/" class="underlined-link">previous post</a>, we traced the entire pipeline that takes a model from an ID string to weights sitting on a GPU, ready to serve. Now we pick up right where that left off: the first request arrives. What actually happens inside the server that produces those responses?
           </p>
           <div class="post-visual post-visual--mono">
             <div class="visual-mono-card">
@@ -69,7 +69,7 @@
             At the same time, the server is not handling just one request. In a real system, many users are sending prompts at different times, each asking the model to generate responses of different lengths.
           </p>
           <p>
-            Suddenly the problem becomes more interesting. The server needs to:
+            The server needs to:
           </p>
           <ul class="simple-list">
             <li>keep track of partially generated responses</li>
@@ -78,10 +78,10 @@
             <li>produce tokens quickly enough that the user does not feel the system is slow</li>
           </ul>
           <p>
-            What initially looks like a simple request-response interaction turns into a surprisingly complex system. To explore this, I decided to host a model myself and trace the full lifecycle of a request, from the moment a prompt reaches the server to the moment the generated tokens are streamed back to the user.
+            To explore this, I decided to host a model myself and trace the full lifecycle of a request, from the moment a prompt reaches the server to the moment the generated tokens are streamed back to the user.
           </p>
           <p>
-            For this investigation I chose Qwen-14B, a model that sits in a useful middle ground. It is large enough that efficiency matters, but still manageable to run on a single GPU with the right setup.
+            For this investigation I chose Qwen-14B. It is large enough that efficiency matters, but still fits on a single GPU with the right setup.
           </p>
           <h2 class="part-heading" id="what-actually-happens-when-a-prompt-reaches-an-llm">What Actually Happens When a Prompt Reaches an LLM?</h2>
           <p>
@@ -264,7 +264,7 @@
             When the transformer processes tokens, each layer builds internal representations that capture how tokens relate to one another. Part of this process involves computing structures known as keys and values for every token.
           </p>
           <p>
-            You do not need to understand the full mathematics behind these vectors to understand the system behavior. The important idea is simpler:
+            You do not need to understand the full mathematics behind these vectors to understand the system behavior.
           </p>
           <p>
             When the model processes a token, it produces information that future tokens will need in order to understand the sequence.
@@ -305,7 +305,7 @@
             At this point, hosting an LLM begins to look less like a simple web service and more like a resource management problem. The server must carefully balance compute on the GPU, memory consumed by KV caches, and multiple requests generating tokens at different speeds.
           </p>
           <p>
-            These constraints are what make LLM inference systems fundamentally different from traditional backend workloads.
+            These constraints are what make LLM inference different from typical backend workloads.
           </p>
           <h2 class="part-heading" id="building-a-naive-llm-server">Building a Naive LLM Server</h2>
           <p>
@@ -395,7 +395,7 @@
           <ul class="simple-list">
             <li>GPU utilization that fluctuates instead of scaling with load, because requests are processed largely one at a time</li>
             <li>Latency that grows roughly in proportion to concurrency, since each additional in-flight request pushes every other request further back in the queue</li>
-            <li>Throughput that flattens immediately — more concurrent requests do not produce more tokens per second</li>
+            <li>Throughput that flattens immediately: more concurrent requests do not produce more tokens per second</li>
             <li>GPU memory pressure that increases with each concurrent request, since every active request carries its own KV cache and the server has no mechanism to manage that memory efficiently</li>
           </ul>
           <p>
@@ -413,7 +413,7 @@
           </p>
           <h3 class="post-subheading" id="replacing-the-backend">Replacing the Backend</h3>
           <p>
-            The change is surgical. The FastAPI API layer stays the same. The only difference is what happens after a request arrives.
+            The change is small. The FastAPI API layer stays the same. The only difference is what happens after a request arrives.
           </p>
           <p>
             With vLLM, inference is delegated to an engine that sits between the API layer and the GPU:
@@ -442,7 +442,7 @@
             From the outside, the service still behaves like a normal API. A client sends a prompt and receives streamed tokens. But internally, vLLM now controls how requests are executed, how GPU work is scheduled, and how memory is managed. The three key mechanisms it uses are a scheduler that coordinates active requests, continuous batching that keeps the GPU busy, and paged attention that manages KV cache memory efficiently.
           </p>
           <p>
-            To understand why these matter, we need to look at what vLLM sees that the naive server was blind to.
+            To understand why these matter, we need to look at what the naive server was missing.
           </p>
           <h3 class="post-subheading" id="how-vllm-manages-inference">How vLLM Manages Inference</h3>
           <p>
@@ -455,7 +455,7 @@
             That is where the scheduler comes in. Once multiple requests are active, the engine has to constantly decide what the GPU should work on next. Some requests are still in prefill. Others are mid-decode. Some have short prompts, others long ones. The scheduler tracks all active requests, knows which phase each one is in, and groups work into batches that keep the GPU busy.
           </p>
           <p>
-            This is the key shift from the naive server. Requests no longer operate independently. They become units of work that the scheduler coordinates across the whole system.
+            Requests no longer operate independently. They become units of work that the scheduler coordinates across the whole system.
           </p>
           <p>
             The scheduler’s main technique is continuous batching. In the naive server, concurrent requests behaved roughly like this:
@@ -542,7 +542,7 @@
             <figcaption>Summary of the vLLM server under the same sweep: latency stays comparatively flat, streaming remains smooth, throughput scales dramatically, and the GPU stays consistently busy as concurrency rises.</figcaption>
           </figure>
           <p>
-            The contrast with the naive server is immediate.
+            The difference from the naive server is clear.
           </p>
           <p>
             Total latency barely moves. At concurrency 1, a request completes in about 2.5 seconds, roughly the same as the naive server. But at concurrency 8, latency is still only ~2.7 seconds, compared to ~45 seconds on the naive server. Even at concurrency 64, the average request finishes in about 3.2 seconds. The naive server took nearly five minutes at the same load. vLLM absorbs concurrency almost invisibly from the user’s perspective.
@@ -558,13 +558,10 @@
           </p>
           <h2 class="part-heading" id="conclusion">Conclusion</h2>
           <p>
-            Serving a large language model efficiently is primarily a systems problem.
-          </p>
-          <p>
             The model did not change between our two servers. The hardware did not change. But the naive server took nearly five minutes to complete a request at concurrency 64, while vLLM finished the same request in about 3 seconds, and generated tokens 45 times faster overall. The difference was entirely in how work was scheduled and how memory was managed.
           </p>
           <p>
-            The techniques behind that improvement (continuous batching, paged attention, request-level scheduling) are not new ideas in systems engineering. They are adaptations of scheduling and memory management patterns that have existed in operating systems and databases for decades, applied to the specific constraints of autoregressive generation on GPUs.
+            Continuous batching, paged attention, and request-level scheduling are borrowed from patterns that have existed in operating systems and databases for decades, applied here to the specific constraints of autoregressive generation on GPUs.
           </p>
           <p>
             In this article, we focused on a single-node setup to build intuition for these core ideas. But real-world deployments introduce additional challenges: handling traffic spikes, scaling across multiple GPUs, managing replicas, and monitoring system health.
