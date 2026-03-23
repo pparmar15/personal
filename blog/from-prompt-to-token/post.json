@@ -387,7 +387,7 @@
     },
     {
       "type": "paragraph",
-      "text": "For these experiments we use Qwen2.5-14B-Instruct, a 14-billion-parameter instruction-tuned model. It is large enough that efficiency matters, but still fits on a single GPU with the right instance. We run it on an AWS g6e.xlarge, which provides an NVIDIA L40S with 48 GB of VRAM, enough headroom for the model weights in FP16 plus the KV caches that grow during generation."
+      "text": "We use the same setup from the previous post: Qwen2.5-14B-Instruct running on an AWS g6e.xlarge with an NVIDIA L40S (48 GB of VRAM). The model weights occupy roughly 28 GB in FP16, leaving the rest for KV caches during generation."
     },
     {
       "type": "paragraph",

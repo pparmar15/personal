@@ -319,7 +319,7 @@
           </p>
           <h3 class="post-subheading" id="setup">Setup</h3>
           <p>
-            For these experiments we use Qwen2.5-14B-Instruct, a 14-billion-parameter instruction-tuned model. It is large enough that efficiency matters, but still fits on a single GPU with the right instance. We run it on an AWS g6e.xlarge, which provides an NVIDIA L40S with 48 GB of VRAM, enough headroom for the model weights in FP16 plus the KV caches that grow during generation.
+            We use the same setup from the previous post: Qwen2.5-14B-Instruct running on an AWS g6e.xlarge with an NVIDIA L40S (48 GB of VRAM). The model weights occupy roughly 28 GB in FP16, leaving the rest for KV caches during generation.
           </p>
           <p>
             The server itself is deliberately simple. A FastAPI application loads the model into GPU memory at startup using the Hugging Face Transformers library. When a request arrives, the server tokenizes the prompt, calls model.generate(), and streams the resulting tokens back to the client over an SSE connection. There is no batching, no scheduler, and no memory management beyond what PyTorch provides by default.

@@ -69,7 +69,10 @@
           <p>
             We will trace the entire loading pipeline, stage by stage, and by the end you should have a clear mental picture of everything that happens before the model is ready to serve its first token.
           </p>
-          <h2 class="part-heading" id="what-is-a-model-id-really">What Is a Model ID, Really?</h2>
+          <p>
+            For these experiments we use Qwen2.5-14B-Instruct, a 14-billion-parameter model, running on an AWS g6e.xlarge with an NVIDIA L40S GPU (48 GB of VRAM). It is a large enough model that efficiency matters, but still fits on a single GPU with the right instance.
+          </p>
+          <h2 class="part-heading" id="what-is-a-model-id">What Is a Model ID?</h2>
           <p>
             Let's start with the string itself.
           </p>
@@ -87,43 +90,10 @@
           <p>
             So what is actually inside this repository? If you browse it on the Hub, you will find something like this:
           </p>
-          <div class="post-visual post-visual--sequence">
-            <p class="post-visual-title">Contents of a typical model repository</p>
-            <div class="visual-sequence">
-              <div class="visual-sequence-row">
-                <span class="visual-sequence-index">01</span>
-                <span class="visual-sequence-text">config.json</span>
-              </div>
-              <div class="visual-sequence-row">
-                <span class="visual-sequence-index">02</span>
-                <span class="visual-sequence-text">tokenizer.json</span>
-              </div>
-              <div class="visual-sequence-row">
-                <span class="visual-sequence-index">03</span>
-                <span class="visual-sequence-text">tokenizer_config.json</span>
-              </div>
-              <div class="visual-sequence-row">
-                <span class="visual-sequence-index">04</span>
-                <span class="visual-sequence-text">model-00001-of-00008.safetensors</span>
-              </div>
-              <div class="visual-sequence-row">
-                <span class="visual-sequence-index">05</span>
-                <span class="visual-sequence-text">model-00002-of-00008.safetensors</span>
-              </div>
-              <div class="visual-sequence-row">
-                <span class="visual-sequence-index">06</span>
-                <span class="visual-sequence-text">...</span>
-              </div>
-              <div class="visual-sequence-row">
-                <span class="visual-sequence-index">07</span>
-                <span class="visual-sequence-text">model-00008-of-00008.safetensors</span>
-              </div>
-              <div class="visual-sequence-row">
-                <span class="visual-sequence-index">08</span>
-                <span class="visual-sequence-text">model.safetensors.index.json</span>
-              </div>
-            </div>
-          </div>
+          <figure class="post-figure">
+            <img src="assets/model_repo.png" alt="A screenshot of a typical Hugging Face model repository showing config files, tokenizer files, sharded safetensors weight files, and the safetensors index file." loading="lazy" />
+            <figcaption>Contents of Qwen2.5-14B-Instruct model repository.</figcaption>
+          </figure>
           <p>
             There are three categories of files here, and each one plays a different role in the loading process.
           </p>
@@ -155,11 +125,10 @@
           <p>
             There is also an index file that acts as a map.
           </p>
-          <div class="post-visual post-visual--mono">
-            <div class="visual-mono-card">
-              <span class="visual-mono-text">model.safetensors.index.json</span>
-            </div>
-          </div>
+          <figure class="post-figure">
+            <img src="assets/model.safetensors.index.png" alt="A screenshot of model.safetensors.index.json showing parameter names mapped to specific safetensors shard files." loading="lazy" />
+            <figcaption>model.safetensors.index.json</figcaption>
+          </figure>
           <p>
             This file tells the loader which parameters live in which shard. When the framework needs to load the attention weights from layer 12, it can look up the index and read directly from the right file instead of scanning through all eight.
           </p>
@@ -255,14 +224,10 @@
               </div>
               <div class="visual-sequence-row">
                 <span class="visual-sequence-index">04</span>
-                <span class="visual-sequence-text">model.layers.47.self_attn.v_proj.weight</span>
-              </div>
-              <div class="visual-sequence-row">
-                <span class="visual-sequence-index">05</span>
                 <span class="visual-sequence-text">model.embed_tokens.weight</span>
               </div>
               <div class="visual-sequence-row">
-                <span class="visual-sequence-index">06</span>
+                <span class="visual-sequence-index">05</span>
                 <span class="visual-sequence-text">lm_head.weight</span>
               </div>
             </div>
@@ -331,7 +296,7 @@
           </p>
           <h3 class="post-subheading" id="what-device-map-auto-actually-does">What device_map="auto" Actually Does</h3>
           <p>
-            The library does not just blindly push everything to the GPU. Instead, it runs a placement algorithm:
+            The library runs a placement algorithm before moving anything to the GPU:
           </p>
           <ul class="simple-list">
             <li>It queries the available devices: how many GPUs, how much VRAM each has</li>
@@ -369,33 +334,7 @@
           </p>
           <h2 class="part-heading" id="warming-up-the-engine">Warming Up the Engine</h2>
           <p>
-            The weights are on the GPU. The architecture is wired up. Everything looks ready. But if you sent a request right now, that first request would be noticeably slower than every request after it.
-          </p>
-          <p>
-            To understand why, we need to talk about what actually happens in GPU memory when the model runs, not just when it sits idle.
-          </p>
-          <h3 class="post-subheading" id="activation-memory-the-counter-space">Activation Memory: The Counter Space</h3>
-          <p>
-            So far we have only talked about one kind of GPU memory usage: the model weights. Those 28 GB of parameters sit in VRAM permanently, like ingredients stored in a pantry. They are there whether the model is working or not.
-          </p>
-          <p>
-            But when the model actually runs a forward pass, it needs additional temporary memory. As a batch of tokens moves through each transformer layer, the GPU computes intermediate results: attention scores, hidden state projections, softmax outputs, feed-forward activations. Each of these intermediate results is a tensor that must live in GPU memory while it is being used.
-          </p>
-          <p>
-            This temporary memory is called activation memory.
-          </p>
-          <p>
-            Think of it like a kitchen. The weights are the ingredients permanently stored in the pantry. They take up shelf space all the time. Activation memory is the cutting boards, mixing bowls, and half-prepped food that spread across your counter while you are actively cooking. Once the dish is done, you clear the counter. But while you are cooking, you need that counter space, and you cannot cook without it.
-          </p>
-          <figure class="post-figure">
-            <img src="assets/activation-memory-kitchen.svg" alt="A sketch showing GPU VRAM split into three regions: model weights (the pantry), activation memory (the counter space during cooking), and the remaining space available for KV caches." loading="lazy" />
-            <figcaption>GPU memory during inference: weights are permanent residents, activation memory is temporary workspace consumed during each forward pass, and whatever remains is available for KV caches.</figcaption>
-          </figure>
-          <p>
-            The size of this activation memory is not fixed. It depends on the sequence length being processed, the batch size, the hidden dimension, and the number of attention heads. A longer prompt or a larger batch means bigger intermediate tensors and more temporary memory consumed.
-          </p>
-          <p>
-            This is easy to overlook when estimating memory. You cannot calculate the real budget just by looking at weight size. The GPU also needs room for these temporary activations during every forward pass.
+            The weights are on the GPU. The architecture is wired up. Everything looks ready. But there are two things left to sort out before the model can actually serve requests: the GPU code has not been compiled yet, and the real memory budget is unknown.
           </p>
           <h3 class="post-subheading" id="why-the-first-request-is-slow">Why the First Request Is Slow</h3>
           <p>
@@ -407,42 +346,25 @@
           <p>
             After that first pass, the compiled kernels are cached and the selected algorithms are remembered. Every subsequent request benefits from this warmup without paying the cost again.
           </p>
-          <h3 class="post-subheading" id="how-serving-engines-handle-this">How Serving Engines Handle This</h3>
+          <h3 class="post-subheading" id="activation-memory-and-the-real-memory-budget">Activation Memory and the Real Memory Budget</h3>
           <p>
-            A naive server built directly on Hugging Face Transformers does not perform any warmup. It loads the model, starts listening for requests, and the first unlucky user pays the cold-inference penalty.
+            The second unknown is how much memory the model actually needs while running. So far we have only talked about one kind of GPU memory usage: the model weights. Those 28 GB of parameters sit in VRAM permanently. They are there whether the model is working or not.
           </p>
           <p>
-            Production serving engines take a different approach. During startup, before accepting any traffic, they run a profiling forward pass. The engine feeds a dummy input through the model to do two things at once:
-          </p>
-          <ul class="simple-list">
-            <li>Warm up the CUDA kernels so they are compiled and cached before real requests arrive</li>
-            <li>Measure the peak activation memory the model actually consumes during a forward pass on this specific hardware</li>
-          </ul>
-          <p>
-            Rather than estimating activation memory from theory, the engine measures it empirically. It runs the model, observes how much VRAM the activations actually consumed, and then calculates exactly how much memory remains for serving concurrent requests.
+            But when the model runs a forward pass, it needs additional temporary memory. As a batch of tokens moves through each transformer layer, the GPU computes intermediate results: attention scores, hidden state projections, softmax outputs, feed-forward activations. Each of these intermediate results is a tensor that must live in GPU memory while it is being used.
           </p>
           <p>
-            This is why production inference servers take noticeably longer to start up than a raw from_pretrained call. They are not just loading weights. They are doing real GPU work to profile the model and establish its memory budget. By the time the engine reports ready, the CUDA kernels are compiled and the remaining VRAM is accounted for.
+            This temporary memory is called activation memory. Its size depends on the sequence length being processed, the batch size, the hidden dimension, and the number of attention heads. A longer prompt or a larger batch means bigger intermediate tensors and more temporary memory consumed.
           </p>
-          <h2 class="part-heading" id="the-model-is-ready-what-does-that-mean">The Model Is "Ready": What Does That Mean?</h2>
+          <figure class="post-figure">
+            <img src="assets/activation-memory-kitchen.svg" alt="A sketch showing GPU VRAM split into three regions: model weights (the pantry), activation memory (the counter space during cooking), and the remaining space available for KV caches." loading="lazy" />
+            <figcaption>GPU memory during inference: weights are permanent residents, activation memory is temporary workspace consumed during each forward pass, and whatever remains is available for KV caches.</figcaption>
+          </figure>
           <p>
-            With weights loaded, placed on the GPU, and the engine warmed up, the model is finally ready to serve.
-          </p>
-          <p>
-            But what does "ready" actually mean in concrete terms?
-          </p>
-          <p>
-            It means the GPU is holding the model's weights in VRAM, the CUDA kernels are compiled and cached, and the serving engine knows exactly how much memory is available for concurrent requests. If you handed it a batch of token IDs right now, the GPU could execute a forward pass immediately: multiplying inputs through embedding layers, running through all 48 transformer layers, and producing a probability distribution over the next token, with no first-request penalty.
-          </p>
-          <p>
-            The model is like a fully furnished, fully equipped factory floor with all the machinery in place, power connected, the lights on, and every machine already tested with a trial run. The conveyor belt is ready to start the moment the first order comes in.
-          </p>
-          <h3 class="post-subheading" id="the-real-memory-budget">The Real Memory Budget</h3>
-          <p>
-            This is also where a critical constraint becomes fully visible. Our L40S has 48 GB of VRAM. But the available memory for serving is not simply total VRAM minus weight size. It is total VRAM minus weights, minus peak activation memory, minus framework overhead.
+            This means the available memory for serving is not simply total VRAM minus weight size. It is total VRAM minus weights, minus peak activation memory, minus framework overhead.
           </p>
           <div class="post-visual post-visual--sequence">
-            <p class="post-visual-title">VRAM budget after loading and warmup (L40S, FP16)</p>
+            <p class="post-visual-title">VRAM budget (L40S, FP16)</p>
             <div class="visual-sequence">
               <div class="visual-sequence-row">
                 <span class="visual-sequence-index">01</span>
@@ -470,10 +392,31 @@
             That remaining memory is the budget for KV caches during inference. Every active request will consume part of this budget as it generates tokens and its cache grows. Once this memory is full, the server either starts rejecting requests or slows down dramatically.
           </p>
           <p>
-            This memory budget is what determines how efficiently the model can be served. How many users can be handled simultaneously, how concurrent requests are scheduled, how KV cache memory is managed and recycled: all of it plays out within whatever VRAM is left over after the model weights and activation overhead are accounted for. We will explore these serving challenges in detail in the next post.
+            How many users can be handled simultaneously, how concurrent requests are scheduled, how KV cache memory is managed and recycled: all of it plays out within whatever VRAM is left over after the model weights and activation overhead are accounted for. We will explore these serving challenges in detail in the next post.
+          </p>
+          <h3 class="post-subheading" id="how-serving-engines-handle-this">How Serving Engines Handle This</h3>
+          <p>
+            A naive server built directly on Hugging Face Transformers does not perform any warmup. It loads the model, starts listening for requests, and the first unlucky user pays the cold-inference penalty.
           </p>
           <p>
-            The loading pipeline does not just determine startup time. It determines how the entire inference system performs under load.
+            Production serving engines take a different approach. During startup, before accepting any traffic, they run a profiling forward pass. The engine feeds a dummy input through the model to do two things at once:
+          </p>
+          <ul class="simple-list">
+            <li>Warm up the CUDA kernels so they are compiled and cached before real requests arrive</li>
+            <li>Measure the peak activation memory the model actually consumes during a forward pass on this specific hardware</li>
+          </ul>
+          <p>
+            Rather than estimating activation memory from theory, the engine measures it empirically. It runs the model, observes how much VRAM the activations actually consumed, and then calculates exactly how much memory remains for serving concurrent requests.
+          </p>
+          <p>
+            This is why production inference servers take noticeably longer to start up than a raw from_pretrained call. Beyond loading weights, they do real GPU work to profile the model and establish its memory budget. By the time the engine reports ready, the CUDA kernels are compiled and the remaining VRAM is accounted for.
+          </p>
+          <h3 class="post-subheading" id="the-model-is-ready">The Model Is "Ready"</h3>
+          <p>
+            With weights loaded, placed on the GPU, and the engine warmed up, the model is finally ready to serve. The GPU is holding the model's weights in VRAM, the CUDA kernels are compiled and cached, and the serving engine knows exactly how much memory is available for concurrent requests. If you handed it a batch of token IDs right now, the GPU could execute a forward pass immediately, with no first-request penalty.
+          </p>
+          <p>
+            The loading pipeline shapes how the entire inference system performs under load.
           </p>
           <h2 class="part-heading" id="putting-it-all-together">Putting It All Together</h2>
           <p>
@@ -483,52 +426,11 @@
             <img src="assets/full-loading-timeline.svg" alt="A horizontal timeline showing all stages of model loading: Resolve model ID, Check local cache, Download weight shards, Read config.json, Build empty model architecture, Load weight tensors from safetensors, Transfer to GPU VRAM, Warmup and profiling, and Ready to serve." loading="lazy" />
             <figcaption>The complete loading timeline, from model ID to first request. Each stage has different bottlenecks: network for download, CPU for model construction, PCIe for GPU transfer, and GPU for warmup.</figcaption>
           </figure>
-          <div class="post-visual post-visual--sequence">
-            <p class="post-visual-title">Loading pipeline stages</p>
-            <div class="visual-sequence">
-              <div class="visual-sequence-row">
-                <span class="visual-sequence-index">01</span>
-                <span class="visual-sequence-text">1. Resolve model ID         → Hub API call</span>
-              </div>
-              <div class="visual-sequence-row">
-                <span class="visual-sequence-index">02</span>
-                <span class="visual-sequence-text">2. Check local cache         → skip download if present</span>
-              </div>
-              <div class="visual-sequence-row">
-                <span class="visual-sequence-index">03</span>
-                <span class="visual-sequence-text">3. Download weight shards    → ~28 GB over network</span>
-              </div>
-              <div class="visual-sequence-row">
-                <span class="visual-sequence-index">04</span>
-                <span class="visual-sequence-text">4. Read config.json          → parse architecture blueprint</span>
-              </div>
-              <div class="visual-sequence-row">
-                <span class="visual-sequence-index">05</span>
-                <span class="visual-sequence-text">5. Construct empty model     → allocate all layers with random weights</span>
-              </div>
-              <div class="visual-sequence-row">
-                <span class="visual-sequence-index">06</span>
-                <span class="visual-sequence-text">6. Load tensors              → memory-mapped read from safetensors</span>
-              </div>
-              <div class="visual-sequence-row">
-                <span class="visual-sequence-index">07</span>
-                <span class="visual-sequence-text">7. Transfer weights to GPU   → push ~28 GB over PCIe into VRAM</span>
-              </div>
-              <div class="visual-sequence-row">
-                <span class="visual-sequence-index">08</span>
-                <span class="visual-sequence-text">8. Warmup and profiling      → compile CUDA kernels, measure activation memory</span>
-              </div>
-              <div class="visual-sequence-row">
-                <span class="visual-sequence-index">09</span>
-                <span class="visual-sequence-text">9. Ready                     → model can serve requests with no cold-start penalty</span>
-              </div>
-            </div>
-          </div>
           <p>
             On a cold start, a fresh instance with no cached files, the dominant cost is the network download. Pulling 28 GB of weights can take anywhere from 30 seconds to several minutes depending on bandwidth. On a warm start where the files are already cached, the download is skipped entirely, and loading is dominated by the time to construct the model, read weights from disk, transfer them to the GPU, and run the warmup profiling pass.
           </p>
           <p>
-            Understanding this pipeline changes how you think about deployment decisions. If cold start time matters, you might pre-cache model weights on the instance's local disk. If you are frequently switching between models, the cache directory becomes critical infrastructure. If you are choosing between FP16 and FP32, you are not just choosing precision. You are choosing how much VRAM remains for actual serving after weights and activation overhead are accounted for.
+            Understanding this pipeline changes how you think about deployment decisions. If cold start time matters, you might pre-cache model weights on the instance's local disk. If you are frequently switching between models, the cache directory becomes critical infrastructure. If you are choosing between FP16 and FP32, you are choosing precision and how much VRAM remains for actual serving after weights and activation overhead are accounted for.
           </p>
           <p>
             Every choice in the loading pipeline affects inference performance. The dtype you pick determines the memory budget. The memory budget constrains how many requests can run concurrently. Concurrency determines whether your users experience fast, streaming responses or long waits.
@@ -549,7 +451,7 @@
                 <a href="#introduction" data-toc-type="part">Introduction</a>
               </li>
               <li class="post-toc-group">
-                <a href="#what-is-a-model-id-really" data-toc-type="part">What Is a Model ID, Really?</a>
+                <a href="#what-is-a-model-id" data-toc-type="part">What Is a Model ID?</a>
               </li>
               <li class="post-toc-group">
                 <a href="#downloading-the-weights" data-toc-type="part">Downloading the Weights</a>
@@ -577,15 +479,10 @@
               <li class="post-toc-group">
                 <a href="#warming-up-the-engine" data-toc-type="part">Warming Up the Engine</a>
                 <ul class="post-toc-sublist">
-                  <li><a href="#activation-memory-the-counter-space" data-toc-type="subheading">Activation Memory: The Counter Space</a></li>
                   <li><a href="#why-the-first-request-is-slow" data-toc-type="subheading">Why the First Request Is Slow</a></li>
+                  <li><a href="#activation-memory-and-the-real-memory-budget" data-toc-type="subheading">Activation Memory and the Real Memory Budget</a></li>
                   <li><a href="#how-serving-engines-handle-this" data-toc-type="subheading">How Serving Engines Handle This</a></li>
-              </ul>
-              </li>
-              <li class="post-toc-group">
-                <a href="#the-model-is-ready-what-does-that-mean" data-toc-type="part">The Model Is "Ready": What Does That Mean?</a>
-                <ul class="post-toc-sublist">
-                  <li><a href="#the-real-memory-budget" data-toc-type="subheading">The Real Memory Budget</a></li>
+                  <li><a href="#the-model-is-ready" data-toc-type="subheading">The Model Is "Ready"</a></li>
               </ul>
               </li>
               <li class="post-toc-group">
