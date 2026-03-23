@@ -55,9 +55,13 @@
       "text": "We will trace the entire loading pipeline, stage by stage, and by the end you should have a clear mental picture of everything that happens before the model is ready to serve its first token."
     },
     {
+      "type": "paragraph",
+      "text": "For these experiments we use Qwen2.5-14B-Instruct, a 14-billion-parameter model, running on an AWS g6e.xlarge with an NVIDIA L40S GPU (48 GB of VRAM). It is a large enough model that efficiency matters, but still fits on a single GPU with the right instance."
+    },
+    {
       "type": "heading",
       "level": "part",
-      "text": "What Is a Model ID, Really?"
+      "text": "What Is a Model ID?"
     },
     {
       "type": "paragraph",
@@ -81,19 +85,10 @@
       "text": "So what is actually inside this repository? If you browse it on the Hub, you will find something like this:"
     },
     {
-      "type": "visual",
-      "variant": "sequence",
-      "title": "Contents of a typical model repository",
-      "rows": [
-        "config.json",
-        "tokenizer.json",
-        "tokenizer_config.json",
-        "model-00001-of-00008.safetensors",
-        "model-00002-of-00008.safetensors",
-        "...",
-        "model-00008-of-00008.safetensors",
-        "model.safetensors.index.json"
-      ]
+      "type": "image",
+      "src": "assets/model_repo.png",
+      "alt": "A screenshot of a typical Hugging Face model repository showing config files, tokenizer files, sharded safetensors weight files, and the safetensors index file.",
+      "caption": "Contents of Qwen2.5-14B-Instruct model repository."
     },
     {
       "type": "paragraph",
@@ -141,9 +136,10 @@
       "text": "There is also an index file that acts as a map."
     },
     {
-      "type": "visual",
-      "variant": "mono",
-      "text": "model.safetensors.index.json"
+      "type": "image",
+      "src": "assets/model.safetensors.index.png",
+      "alt": "A screenshot of model.safetensors.index.json showing parameter names mapped to specific safetensors shard files.",
+      "caption": "model.safetensors.index.json"
     },
     {
       "type": "paragraph",
@@ -258,7 +254,6 @@
         "model.layers.0.self_attn.q_proj.weight",
         "model.layers.0.self_attn.k_proj.weight",
         "model.layers.0.mlp.gate_proj.weight",
-        "model.layers.47.self_attn.v_proj.weight",
         "model.embed_tokens.weight",
         "lm_head.weight"
       ]
@@ -334,7 +329,7 @@
     },
     {
       "type": "paragraph",
-      "text": "The library does not just blindly push everything to the GPU. Instead, it runs a placement algorithm:"
+      "text": "The library runs a placement algorithm before moving anything to the GPU:"
     },
     {
       "type": "list",
@@ -393,45 +388,7 @@
     },
     {
       "type": "paragraph",
-      "text": "The weights are on the GPU. The architecture is wired up. Everything looks ready. But if you sent a request right now, that first request would be noticeably slower than every request after it."
-    },
-    {
-      "type": "paragraph",
-      "text": "To understand why, we need to talk about what actually happens in GPU memory when the model runs, not just when it sits idle."
-    },
-    {
-      "type": "heading",
-      "text": "Activation Memory: The Counter Space"
-    },
-    {
-      "type": "paragraph",
-      "text": "So far we have only talked about one kind of GPU memory usage: the model weights. Those 28 GB of parameters sit in VRAM permanently, like ingredients stored in a pantry. They are there whether the model is working or not."
-    },
-    {
-      "type": "paragraph",
-      "text": "But when the model actually runs a forward pass, it needs additional temporary memory. As a batch of tokens moves through each transformer layer, the GPU computes intermediate results: attention scores, hidden state projections, softmax outputs, feed-forward activations. Each of these intermediate results is a tensor that must live in GPU memory while it is being used."
-    },
-    {
-      "type": "paragraph",
-      "text": "This temporary memory is called activation memory."
-    },
-    {
-      "type": "paragraph",
-      "text": "Think of it like a kitchen. The weights are the ingredients permanently stored in the pantry. They take up shelf space all the time. Activation memory is the cutting boards, mixing bowls, and half-prepped food that spread across your counter while you are actively cooking. Once the dish is done, you clear the counter. But while you are cooking, you need that counter space, and you cannot cook without it."
-    },
-    {
-      "type": "image",
-      "src": "assets/activation-memory-kitchen.excalidraw",
-      "alt": "A sketch showing GPU VRAM split into three regions: model weights (the pantry), activation memory (the counter space during cooking), and the remaining space available for KV caches.",
-      "caption": "GPU memory during inference: weights are permanent residents, activation memory is temporary workspace consumed during each forward pass, and whatever remains is available for KV caches."
-    },
-    {
-      "type": "paragraph",
-      "text": "The size of this activation memory is not fixed. It depends on the sequence length being processed, the batch size, the hidden dimension, and the number of attention heads. A longer prompt or a larger batch means bigger intermediate tensors and more temporary memory consumed."
-    },
-    {
-      "type": "paragraph",
-      "text": "This is easy to overlook when estimating memory. You cannot calculate the real budget just by looking at weight size. The GPU also needs room for these temporary activations during every forward pass."
+      "text": "The weights are on the GPU. The architecture is wired up. Everything looks ready. But there are two things left to sort out before the model can actually serve requests: the GPU code has not been compiled yet, and the real memory budget is unknown."
     },
     {
       "type": "heading",
@@ -448,6 +405,52 @@
     {
       "type": "paragraph",
       "text": "After that first pass, the compiled kernels are cached and the selected algorithms are remembered. Every subsequent request benefits from this warmup without paying the cost again."
+    },
+    {
+      "type": "heading",
+      "text": "Activation Memory and the Real Memory Budget"
+    },
+    {
+      "type": "paragraph",
+      "text": "The second unknown is how much memory the model actually needs while running. So far we have only talked about one kind of GPU memory usage: the model weights. Those 28 GB of parameters sit in VRAM permanently. They are there whether the model is working or not."
+    },
+    {
+      "type": "paragraph",
+      "text": "But when the model runs a forward pass, it needs additional temporary memory. As a batch of tokens moves through each transformer layer, the GPU computes intermediate results: attention scores, hidden state projections, softmax outputs, feed-forward activations. Each of these intermediate results is a tensor that must live in GPU memory while it is being used."
+    },
+    {
+      "type": "paragraph",
+      "text": "This temporary memory is called activation memory. Its size depends on the sequence length being processed, the batch size, the hidden dimension, and the number of attention heads. A longer prompt or a larger batch means bigger intermediate tensors and more temporary memory consumed."
+    },
+    {
+      "type": "image",
+      "src": "assets/activation-memory-kitchen.excalidraw",
+      "alt": "A sketch showing GPU VRAM split into three regions: model weights (the pantry), activation memory (the counter space during cooking), and the remaining space available for KV caches.",
+      "caption": "GPU memory during inference: weights are permanent residents, activation memory is temporary workspace consumed during each forward pass, and whatever remains is available for KV caches."
+    },
+    {
+      "type": "paragraph",
+      "text": "This means the available memory for serving is not simply total VRAM minus weight size. It is total VRAM minus weights, minus peak activation memory, minus framework overhead."
+    },
+    {
+      "type": "visual",
+      "variant": "sequence",
+      "title": "VRAM budget (L40S, FP16)",
+      "rows": [
+        "Total VRAM:              48 GB",
+        "Model weights:          ~28 GB",
+        "Peak activation memory:  ~1-2 GB",
+        "PyTorch/CUDA overhead:   ~1 GB",
+        "Available for KV cache: ~17-18 GB"
+      ]
+    },
+    {
+      "type": "paragraph",
+      "text": "That remaining memory is the budget for KV caches during inference. Every active request will consume part of this budget as it generates tokens and its cache grows. Once this memory is full, the server either starts rejecting requests or slows down dramatically."
+    },
+    {
+      "type": "paragraph",
+      "text": "How many users can be handled simultaneously, how concurrent requests are scheduled, how KV cache memory is managed and recycled: all of it plays out within whatever VRAM is left over after the model weights and activation overhead are accounted for. We will explore these serving challenges in detail in the next post."
     },
     {
       "type": "heading",
@@ -474,60 +477,19 @@
     },
     {
       "type": "paragraph",
-      "text": "This is why production inference servers take noticeably longer to start up than a raw from_pretrained call. They are not just loading weights. They are doing real GPU work to profile the model and establish its memory budget. By the time the engine reports ready, the CUDA kernels are compiled and the remaining VRAM is accounted for."
+      "text": "This is why production inference servers take noticeably longer to start up than a raw from_pretrained call. Beyond loading weights, they do real GPU work to profile the model and establish its memory budget. By the time the engine reports ready, the CUDA kernels are compiled and the remaining VRAM is accounted for."
     },
     {
       "type": "heading",
-      "level": "part",
-      "text": "The Model Is \"Ready\": What Does That Mean?"
+      "text": "The Model Is \"Ready\""
     },
     {
       "type": "paragraph",
-      "text": "With weights loaded, placed on the GPU, and the engine warmed up, the model is finally ready to serve."
+      "text": "With weights loaded, placed on the GPU, and the engine warmed up, the model is finally ready to serve. The GPU is holding the model's weights in VRAM, the CUDA kernels are compiled and cached, and the serving engine knows exactly how much memory is available for concurrent requests. If you handed it a batch of token IDs right now, the GPU could execute a forward pass immediately, with no first-request penalty."
     },
     {
       "type": "paragraph",
-      "text": "But what does \"ready\" actually mean in concrete terms?"
-    },
-    {
-      "type": "paragraph",
-      "text": "It means the GPU is holding the model's weights in VRAM, the CUDA kernels are compiled and cached, and the serving engine knows exactly how much memory is available for concurrent requests. If you handed it a batch of token IDs right now, the GPU could execute a forward pass immediately: multiplying inputs through embedding layers, running through all 48 transformer layers, and producing a probability distribution over the next token, with no first-request penalty."
-    },
-    {
-      "type": "paragraph",
-      "text": "The model is like a fully furnished, fully equipped factory floor with all the machinery in place, power connected, the lights on, and every machine already tested with a trial run. The conveyor belt is ready to start the moment the first order comes in."
-    },
-    {
-      "type": "heading",
-      "text": "The Real Memory Budget"
-    },
-    {
-      "type": "paragraph",
-      "text": "This is also where a critical constraint becomes fully visible. Our L40S has 48 GB of VRAM. But the available memory for serving is not simply total VRAM minus weight size. It is total VRAM minus weights, minus peak activation memory, minus framework overhead."
-    },
-    {
-      "type": "visual",
-      "variant": "sequence",
-      "title": "VRAM budget after loading and warmup (L40S, FP16)",
-      "rows": [
-        "Total VRAM:              48 GB",
-        "Model weights:          ~28 GB",
-        "Peak activation memory:  ~1-2 GB",
-        "PyTorch/CUDA overhead:   ~1 GB",
-        "Available for KV cache: ~17-18 GB"
-      ]
-    },
-    {
-      "type": "paragraph",
-      "text": "That remaining memory is the budget for KV caches during inference. Every active request will consume part of this budget as it generates tokens and its cache grows. Once this memory is full, the server either starts rejecting requests or slows down dramatically."
-    },
-    {
-      "type": "paragraph",
-      "text": "This memory budget is what determines how efficiently the model can be served. How many users can be handled simultaneously, how concurrent requests are scheduled, how KV cache memory is managed and recycled: all of it plays out within whatever VRAM is left over after the model weights and activation overhead are accounted for. We will explore these serving challenges in detail in the next post."
-    },
-    {
-      "type": "paragraph",
-      "text": "The loading pipeline does not just determine startup time. It determines how the entire inference system performs under load."
+      "text": "The loading pipeline shapes how the entire inference system performs under load."
     },
     {
       "type": "heading",
@@ -545,28 +507,12 @@
       "caption": "The complete loading timeline, from model ID to first request. Each stage has different bottlenecks: network for download, CPU for model construction, PCIe for GPU transfer, and GPU for warmup."
     },
     {
-      "type": "visual",
-      "variant": "sequence",
-      "title": "Loading pipeline stages",
-      "rows": [
-        "1. Resolve model ID         → Hub API call",
-        "2. Check local cache         → skip download if present",
-        "3. Download weight shards    → ~28 GB over network",
-        "4. Read config.json          → parse architecture blueprint",
-        "5. Construct empty model     → allocate all layers with random weights",
-        "6. Load tensors              → memory-mapped read from safetensors",
-        "7. Transfer weights to GPU   → push ~28 GB over PCIe into VRAM",
-        "8. Warmup and profiling      → compile CUDA kernels, measure activation memory",
-        "9. Ready                     → model can serve requests with no cold-start penalty"
-      ]
-    },
-    {
       "type": "paragraph",
       "text": "On a cold start, a fresh instance with no cached files, the dominant cost is the network download. Pulling 28 GB of weights can take anywhere from 30 seconds to several minutes depending on bandwidth. On a warm start where the files are already cached, the download is skipped entirely, and loading is dominated by the time to construct the model, read weights from disk, transfer them to the GPU, and run the warmup profiling pass."
     },
     {
       "type": "paragraph",
-      "text": "Understanding this pipeline changes how you think about deployment decisions. If cold start time matters, you might pre-cache model weights on the instance's local disk. If you are frequently switching between models, the cache directory becomes critical infrastructure. If you are choosing between FP16 and FP32, you are not just choosing precision. You are choosing how much VRAM remains for actual serving after weights and activation overhead are accounted for."
+      "text": "Understanding this pipeline changes how you think about deployment decisions. If cold start time matters, you might pre-cache model weights on the instance's local disk. If you are frequently switching between models, the cache directory becomes critical infrastructure. If you are choosing between FP16 and FP32, you are choosing precision and how much VRAM remains for actual serving after weights and activation overhead are accounted for."
     },
     {
       "type": "paragraph",
